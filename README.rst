@@ -40,13 +40,14 @@ Installation
 Asymmetric key algorithms (RSA and ECDSA)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 For asymmetric key algorithms, you should supply the private key as the ``key`` parameter to the ``HTTPSignatureAuth()`` 
-constructor as bytes in the PEM format. When verifying, the ``key_resolver()`` callback should provide the public key as
-bytes in the PEM format as well:
+constructor as bytes in the PEM format:
 
 .. code-block:: python
 
   with open('key.pem', 'rb') as fh:
       requests.get(url, auth=HTTPSignatureAuth(algorithm="rsa-sha256", key=fh.read(), key_id=preshared_key_id))
+
+When verifying, the ``key_resolver()`` callback should provide the public key as bytes in the PEM format as well:
 
 Links
 -----
