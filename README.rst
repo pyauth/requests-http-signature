@@ -3,9 +3,9 @@ requests-http-signature: A Requests auth module for HTTP Signature
 
 **requests-http-signature** is a `Requests <https://github.com/requests/requests>`_ `authentication plugin
 <http://docs.python-requests.org/en/master/user/authentication/>`_ (``requests.auth.AuthBase`` subclass) implementing
-the `IETF HTTP Signatures draft <https://tools.ietf.org/html/draft-cavage-http-signatures>`_. It has no required
-dependencies outside the standard library. If you wish to use algorithms other than HMAC, there is an optional
-dependency on `cryptography <https://pypi.python.org/pypi/cryptography>`_.
+the `IETF HTTP Signatures draft RFC <https://tools.ietf.org/html/draft-cavage-http-signatures>`_. It has no required
+dependencies outside the standard library. If you wish to use algorithms other than HMAC (namely, RSA and ECDSA algorithms
+specified in the RFC), there is an optional dependency on `cryptography <https://pypi.python.org/pypi/cryptography>`_.
 
 .. code-block:: python
 
@@ -15,20 +15,27 @@ dependency on `cryptography <https://pypi.python.org/pypi/cryptography>`_.
   url = 'http://httpbin.org/get'
   requests.get(url, auth=HTTPSignatureAuth(key=preshared_secret))
 
-In addition to signing messages in the client, this module can be used to verify incoming requests:
+In addition to signing messages in the client, the class method ``HTTPSignatureAuth.verify()`` can be used to verify
+incoming requests:
 
 .. code-block:: python
 
   def key_resolver(key_id, algorithm):
       return 'monorail_cat'
 
-  HTTPSignatureAuth(key=preshared_secret).verify(request, key_resolver=key_resolver)
+  HTTPSignatureAuth.verify(request, key_resolver=key_resolver)
 
 Installation
 ------------
 ::
 
     pip install requests-http-signature
+
+Asymmetric key algorithms (RSA and ECDSA)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+For asymmetric key algorithms, you should supply the private key as the ``key`` parameter to the ``HTTPSignatureAuth()`` 
+constructor as bytes in the PEM format. When verifying, the ``key_resolver()`` callback should provide the public key as
+bytes in the PEM format as well.
 
 Links
 -----
