@@ -50,7 +50,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         self.key_id = key_id
         self.algorithm = algorithm
         self.headers = [h.lower() for h in headers] if headers is not None else ["date"]
-        self.passphrase = passphrase
+        self.passphrase = passphrase if passphrase is None or isinstance(passphrase, bytes) else passphrase.encode()
 
     def add_date(self, request, timestamp=None):
         if "Date" not in request.headers:
