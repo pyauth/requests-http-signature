@@ -11,9 +11,10 @@ specified in the RFC), there is an optional dependency on `cryptography <https:/
 
   import requests
   from requests_http_signature import HTTPSignatureAuth
+  preshared_key_id = 'squirrel'
   preshared_secret = 'monorail_cat'
   url = 'http://example.com/path'
-  requests.get(url, auth=HTTPSignatureAuth(key=preshared_secret, key_id='squirrel'))
+  requests.get(url, auth=HTTPSignatureAuth(key=preshared_secret, key_id=preshared_key_id))
 
 In addition to signing messages in the client, the class method ``HTTPSignatureAuth.verify()`` can be used to verify
 incoming requests:
