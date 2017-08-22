@@ -16,6 +16,11 @@ specified in the RFC), there is an optional dependency on `cryptography <https:/
   url = 'http://example.com/path'
   requests.get(url, auth=HTTPSignatureAuth(key=preshared_secret, key_id=preshared_key_id))
 
+By default, only the ``Date`` header is signed (as per the RFC) for body-less requests such as GET. The ``Date`` header
+is set if it is absent. In addition, for requests with bodies (such as POST), the ``Digest`` header is set to the SHA256
+of the request body and signed (an example of this appears in the RFC). To add other headers to the signature, pass an
+array of header names in the ``header`` keyword argument.
+
 In addition to signing messages in the client, the class method ``HTTPSignatureAuth.verify()`` can be used to verify
 incoming requests:
 
@@ -36,7 +41,12 @@ Asymmetric key algorithms (RSA and ECDSA)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 For asymmetric key algorithms, you should supply the private key as the ``key`` parameter to the ``HTTPSignatureAuth()`` 
 constructor as bytes in the PEM format. When verifying, the ``key_resolver()`` callback should provide the public key as
-bytes in the PEM format as well.
+bytes in the PEM format as well:
+
+.. code-block:: python
+
+  with open('key.pem', 'rb') as fh:
+      requests.get(url, auth=HTTPSignatureAuth(algorithm="rsa-sha256", key=fh.read(), key_id=preshared_key_id))
 
 Links
 -----
