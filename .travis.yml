@@ -1,0 +1,23 @@
+language: python
+python:
+  - 2.7
+  - 3.3
+  - 3.4
+  - 3.5
+  - 3.6
+  - nightly
+
+dist: trusty
+sudo: false
+
+before_install:
+  - pip install --quiet codecov wheel
+
+install:
+  - make install
+
+script:
+  - make test
+
+after_success:
+  - bash <(curl -s https://codecov.io/bash)
