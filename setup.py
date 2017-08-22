@@ -28,6 +28,9 @@ setup(
         'Development Status :: 5 - Production/Stable',
         'Topic :: Software Development :: Libraries :: Python Modules'
     ],
+    install_requires=[
+        "requests"
+    ],
     extras_require={
         "rsa": ["cryptography >= 1.8.2"],
         "ecdsa": ["cryptography >= 1.8.2"]
