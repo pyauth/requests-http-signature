@@ -13,7 +13,7 @@ dependency on `cryptography <https://pypi.python.org/pypi/cryptography>`_.
   from requests_http_signature import HTTPSignatureAuth
   preshared_secret = 'monorail_cat'
   url = 'http://httpbin.org/get'
-  requests.get(url, auth=HTTPSignatureAuth(secret=preshared_secret))
+  requests.get(url, auth=HTTPSignatureAuth(key=preshared_secret))
 
 
 Installation
