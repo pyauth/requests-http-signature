@@ -15,6 +15,14 @@ dependency on `cryptography <https://pypi.python.org/pypi/cryptography>`_.
   url = 'http://httpbin.org/get'
   requests.get(url, auth=HTTPSignatureAuth(key=preshared_secret))
 
+In addition to signing messages in the client, this module can be used to verify incoming requests:
+
+.. code-block:: python
+
+  def key_resolver(key_id, algorithm):
+      return 'monorail_cat'
+
+  HTTPSignatureAuth(key=preshared_secret).verify(request, key_resolver=key_resolver)
 
 Installation
 ------------
