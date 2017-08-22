@@ -3,8 +3,9 @@ requests-http-signature: A Requests auth module for HTTP Signature
 
 **requests-http-signature** is a `Requests <https://github.com/requests/requests>`_ `authentication plugin
 <http://docs.python-requests.org/en/master/user/authentication/>`_ (``requests.auth.AuthBase`` subclass) implementing
-the `IETF HTTP Signatures draft <https://tools.ietf.org/html/draft-cavage-http-signatures>`_. It has no dependencies
-outside the standard library.
+the `IETF HTTP Signatures draft <https://tools.ietf.org/html/draft-cavage-http-signatures>`_. It has no required
+dependencies outside the standard library. If you wish to use algorithms other than HMAC, there is an optional
+dependency on `cryptography <https://pypi.python.org/pypi/cryptography>`_.
 
 .. code-block:: python
 
