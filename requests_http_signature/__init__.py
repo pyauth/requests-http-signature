@@ -44,7 +44,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         "ecdsa-sha256",
     }
 
-    def __init__(self, key, key_id="hmac-key-1", algorithm="hmac-sha256", headers=None, passphrase=None):
+    def __init__(self, key, key_id, algorithm="hmac-sha256", headers=None, passphrase=None):
         assert algorithm in self.known_algorithms
         self.key = key
         self.key_id = key_id
@@ -65,6 +65,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             digest = self.hasher_constructor(request.body).digest()
             request.headers["Digest"] = "SHA-256=" + base64.b64encode(digest).decode()
 
+    @classmethod
     def get_string_to_sign(self, request, headers):
         sts = []
         for header in headers:
@@ -92,6 +93,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         request.headers["Authorization"] = "Signature " + ",".join('{}="{}"'.format(k, v) for k, v in sig_struct)
         return request
 
+    @classmethod
     def verify(self, request, key_resolver):
         assert "Authorization" in request.headers, "No Authorization header found"
         msg = 'Unexpected scheme found in Authorization header (expected "Signature")'

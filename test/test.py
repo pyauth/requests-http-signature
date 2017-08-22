@@ -20,7 +20,7 @@ class TestAdapter(HTTPAdapter):
             if "pubkey" in request.headers:
                 return base64.b64decode(request.headers["pubkey"])
             return hmac_secret
-        HTTPSignatureAuth(key=hmac_secret).verify(request, key_resolver=key_resolver)
+        HTTPSignatureAuth.verify(request, key_resolver=key_resolver)
         response = requests.Response()
         response.status_code = requests.codes.ok
         response.url = request.url
@@ -34,15 +34,16 @@ class TestRequestsHTTPSignature(unittest.TestCase):
 
     def test_basic_statements(self):
         url = 'http://example.com/path?query#fragment'
-        self.session.get(url, auth=HTTPSignatureAuth(key=hmac_secret))
+        self.session.get(url, auth=HTTPSignatureAuth(key=hmac_secret, key_id="sekret"))
         with self.assertRaises(AssertionError):
-            self.session.get(url, auth=HTTPSignatureAuth(key=hmac_secret[::-1]))
+            self.session.get(url, auth=HTTPSignatureAuth(key=hmac_secret[::-1], key_id="sekret"))
 
     def test_rfc_example(self):
         url = 'http://example.org/foo'
         payload = {"hello": "world"}
         date = "Tue, 07 Jun 2014 20:51:35 GMT"
         auth = HTTPSignatureAuth(key=hmac_secret,
+                                 key_id="sekret",
                                  headers=["(request-target)", "host", "date", "digest", "content-length"])
         self.session.post(url, json=payload, headers={"Date": date}, auth=auth)
 
@@ -65,7 +66,7 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         )
         url = 'http://example.com/path?query#fragment'
-        auth = HTTPSignatureAuth(algorithm="rsa-sha256", key=private_key_pem, passphrase=passphrase)
+        auth = HTTPSignatureAuth(algorithm="rsa-sha256", key=private_key_pem, key_id="sekret", passphrase=passphrase)
         self.session.get(url, auth=auth, headers=dict(pubkey=base64.b64encode(public_key_pem)))
 
 if __name__ == '__main__':
