@@ -33,7 +33,11 @@ class Crypto:
             assert signature == hmac.new(key, string_to_sign, digestmod=hashlib.sha256).digest()
         else:
             key = self.load_pem_public_key(key, backend=self.default_backend())
-            key.verify(signature, string_to_sign, self.PKCS1v15(), self.SHA256())
+            hasher = self.SHA1() if self.algorithm.endswith("sha1") else self.SHA256()
+            if self.algorithm == "ecdsa-sha256":
+                key.verify(signature, string_to_sign, self.ec.ECDSA(hasher))
+            else:
+                key.verify(signature, string_to_sign, self.PKCS1v15(), hasher)
 
 class HTTPSignatureAuth(requests.auth.AuthBase):
     hasher_constructor = hashlib.sha256
@@ -94,12 +98,16 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         return request
 
     @classmethod
+    def get_sig_struct(self, request):
+        scheme, sig_struct = request.headers["Authorization"].split(" ", 1)
+        return {i.split("=", 1)[0]: i.split("=", 1)[1].strip('"') for i in sig_struct.split(",")}
+
+    @classmethod
     def verify(self, request, key_resolver):
         assert "Authorization" in request.headers, "No Authorization header found"
         msg = 'Unexpected scheme found in Authorization header (expected "Signature")'
         assert request.headers["Authorization"].startswith("Signature "), msg
-        scheme, sig_struct = request.headers["Authorization"].split(" ", 1)
-        sig_struct = {i.split("=", 1)[0]: i.split("=", 1)[1].strip('"') for i in sig_struct.split(",")}
+        sig_struct = self.get_sig_struct(request)
         for field in "keyId", "algorithm", "signature":
             assert field in sig_struct, 'Required signature parameter "{}" not found'.format(field)
         assert sig_struct["algorithm"] in self.known_algorithms, "Unknown signature algorithm"

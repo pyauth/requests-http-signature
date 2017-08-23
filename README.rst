@@ -52,6 +52,7 @@ When verifying, the ``key_resolver()`` callback should provide the public key as
 Links
 -----
 * `IETF HTTP Signatures draft <https://tools.ietf.org/html/draft-cavage-http-signatures>`_
+* https://github.com/joyent/node-http-signature
 * `Project home page (GitHub) <https://github.com/kislyuk/requests-http-signature>`_
 * `Documentation (Read the Docs) <https://requests-http-signature.readthedocs.io/en/latest/>`_
 * `Package distribution (PyPI) <https://pypi.python.org/pypi/requests-http-signature>`_
