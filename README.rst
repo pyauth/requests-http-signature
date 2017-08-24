@@ -1,11 +1,19 @@
 requests-http-signature: A Requests auth module for HTTP Signature
 ==================================================================
-
 **requests-http-signature** is a `Requests <https://github.com/requests/requests>`_ `authentication plugin
 <http://docs.python-requests.org/en/master/user/authentication/>`_ (``requests.auth.AuthBase`` subclass) implementing
 the `IETF HTTP Signatures draft RFC <https://tools.ietf.org/html/draft-cavage-http-signatures>`_. It has no required
 dependencies outside the standard library. If you wish to use algorithms other than HMAC (namely, RSA and ECDSA algorithms
 specified in the RFC), there is an optional dependency on `cryptography <https://pypi.python.org/pypi/cryptography>`_.
+
+Installation
+------------
+::
+
+    pip install requests-http-signature
+
+Usage
+-----
 
 .. code-block:: python
 
@@ -30,12 +38,6 @@ incoming requests:
       return 'monorail_cat'
 
   HTTPSignatureAuth.verify(request, key_resolver=key_resolver)
-
-Installation
-------------
-::
-
-    pip install requests-http-signature
 
 Asymmetric key algorithms (RSA and ECDSA)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
