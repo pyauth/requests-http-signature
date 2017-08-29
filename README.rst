@@ -10,7 +10,7 @@ Installation
 ------------
 ::
 
-    pip install requests-http-signature
+    $ pip install requests-http-signature
 
 Usage
 -----
@@ -19,9 +19,11 @@ Usage
 
   import requests
   from requests_http_signature import HTTPSignatureAuth
+  
   preshared_key_id = 'squirrel'
   preshared_secret = 'monorail_cat'
   url = 'http://example.com/path'
+  
   requests.get(url, auth=HTTPSignatureAuth(key=preshared_secret, key_id=preshared_key_id))
 
 By default, only the ``Date`` header is signed (as per the RFC) for body-less requests such as GET. The ``Date`` header
