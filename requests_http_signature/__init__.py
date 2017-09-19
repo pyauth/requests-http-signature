@@ -74,7 +74,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         sts = []
         for header in headers:
             if header == "(request-target)":
-                sts.append("(request-target): {} {}".format(request.method.lower(), request.path_url))
+                path_url = requests.models.RequestEncodingMixin.path_url.fget(request)
+                sts.append("(request-target): {} {}".format(request.method.lower(), path_url))
             else:
                 if header.lower() == "host":
                     value = request.headers.get("host", urlparse(request.url).hostname)
