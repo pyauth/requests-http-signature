@@ -102,6 +102,16 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         auth = HTTPSignatureAuth(algorithm="rsa-sha256", key=private_key_pem, key_id="sekret", passphrase=passphrase)
         self.session.get(url, auth=auth, headers=dict(pubkey=base64.b64encode(public_key_pem)))
 
+    def test_can_use_signature_header(self):
+        auth = auth=HTTPSignatureAuth(
+            key=hmac_secret, key_id="sekret", use_auth_header=False)
+        r = requests.Request(
+            url='http://test.com', auth=auth)
+        prepared = r.prepare()
+
+        self.assertIn('Signature', prepared.headers)
+        self.assertTrue(prepared.headers['Signature'].startswith('keyId='))
+
 
 if __name__ == '__main__':
     unittest.main()
