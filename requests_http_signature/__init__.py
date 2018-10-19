@@ -121,3 +121,25 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         sts = self.get_string_to_sign(request, headers)
         key = key_resolver(key_id=sig_struct["keyId"], algorithm=sig_struct["algorithm"])
         Crypto(sig_struct["algorithm"]).verify(sig, sts, key)
+
+class HTTPSignatureHeaderAuth(HTTPSignatureAuth):
+    """
+        https://tools.ietf.org/html/draft-cavage-http-signatures-08#section-4
+
+        Using "Signature" header instead of "Authorization" header.
+    """
+
+    def __call__(self, request):
+        self.add_date(request)
+        self.add_digest(request)
+        raw_sig = Crypto(self.algorithm).sign(string_to_sign=self.get_string_to_sign(request, self.headers),
+                                              key=self.key,
+                                              passphrase=self.passphrase)
+        sig = base64.b64encode(raw_sig).decode()
+        sig_struct = [("keyId", self.key_id),
+                      ("algorithm", self.algorithm),
+                      ("headers", " ".join(self.headers)),
+                      ("signature", sig)]
+        request.headers["Signature"] = ",".join('{}="{}"'.format(k, v) for k, v in sig_struct)
+        return request
+
