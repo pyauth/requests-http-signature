@@ -13,7 +13,7 @@ class Crypto:
             from cryptography.hazmat.backends import default_backend
             from cryptography.hazmat.primitives.asymmetric import rsa, ec
             from cryptography.hazmat.primitives.asymmetric.padding import PKCS1v15
-            from cryptography.hazmat.primitives.hashes import SHA1, SHA256
+            from cryptography.hazmat.primitives.hashes import SHA1, SHA256, SHA512
         self.__dict__.update(locals())
 
     def sign(self, string_to_sign, key, passphrase=None):
@@ -22,6 +22,9 @@ class Crypto:
         key = self.load_pem_private_key(key, password=passphrase, backend=self.default_backend())
         if self.algorithm in {"rsa-sha1", "rsa-sha256"}:
             hasher = self.SHA1() if self.algorithm.endswith("sha1") else self.SHA256()
+            signer = key.signer(padding=self.PKCS1v15(), algorithm=hasher)
+        elif self.algorithm in {"rsa-sha512"}:
+            hasher = self.SHA512()
             signer = key.signer(padding=self.PKCS1v15(), algorithm=hasher)
         elif self.algorithm == "ecdsa-sha256":
             signer = key.signer(signature_algorithm=self.ec.ECDSA(algorithm=self.SHA256()))
@@ -44,6 +47,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     known_algorithms = {
         "rsa-sha1",
         "rsa-sha256",
+        "rsa-sha512",
         "hmac-sha256",
         "ecdsa-sha256",
     }
@@ -117,3 +121,25 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         sts = self.get_string_to_sign(request, headers)
         key = key_resolver(key_id=sig_struct["keyId"], algorithm=sig_struct["algorithm"])
         Crypto(sig_struct["algorithm"]).verify(sig, sts, key)
+
+class HTTPSignatureHeaderAuth(HTTPSignatureAuth):
+    """
+        https://tools.ietf.org/html/draft-cavage-http-signatures-08#section-4
+
+        Using "Signature" header instead of "Authorization" header.
+    """
+
+    def __call__(self, request):
+        self.add_date(request)
+        self.add_digest(request)
+        raw_sig = Crypto(self.algorithm).sign(string_to_sign=self.get_string_to_sign(request, self.headers),
+                                              key=self.key,
+                                              passphrase=self.passphrase)
+        sig = base64.b64encode(raw_sig).decode()
+        sig_struct = [("keyId", self.key_id),
+                      ("algorithm", self.algorithm),
+                      ("headers", " ".join(self.headers)),
+                      ("signature", sig)]
+        request.headers["Signature"] = ",".join('{}="{}"'.format(k, v) for k, v in sig_struct)
+        return request
+
