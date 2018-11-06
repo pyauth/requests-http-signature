@@ -142,4 +142,3 @@ class HTTPSignatureHeaderAuth(HTTPSignatureAuth):
                       ("signature", sig)]
         request.headers["Signature"] = ",".join('{}="{}"'.format(k, v) for k, v in sig_struct)
         return request
-
