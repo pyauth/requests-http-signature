@@ -1,3 +1,10 @@
+Changes for v0.1.0 (2018-11-05)
+===============================
+
+-  Support using a Signature header instead of Authorization header.
+
+-  Add RSA512 algorithm.
+
 Changes for v0.0.3 (2017-09-19)
 ===============================
 
