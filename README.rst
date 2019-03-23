@@ -29,7 +29,7 @@ Usage
 By default, only the ``Date`` header is signed (as per the RFC) for body-less requests such as GET. The ``Date`` header
 is set if it is absent. In addition, for requests with bodies (such as POST), the ``Digest`` header is set to the SHA256
 of the request body and signed (an example of this appears in the RFC). To add other headers to the signature, pass an
-array of header names in the ``header`` keyword argument.
+array of header names in the ``headers`` keyword argument.
 
 In addition to signing messages in the client, the class method ``HTTPSignatureAuth.verify()`` can be used to verify
 incoming requests:
