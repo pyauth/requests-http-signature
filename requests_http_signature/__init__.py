@@ -82,7 +82,16 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                 sts.append("(request-target): {} {}".format(request.method.lower(), path_url))
             else:
                 if header.lower() == "host":
-                    value = request.headers.get("host", urlparse(request.url).hostname)
+                    url = urlparse(request.url)
+                    value = request.headers.get("host", url.hostname)
+                    if (
+                        url.scheme == "http"
+                        and url.port not in [None, 80]
+                        or url.scheme == "https"
+                        and url.port not in [443, None]
+                    ):
+                        value = "{}:{}".format(value, url.port)
+
                 else:
                     value = request.headers[header]
                 sts.append("{k}: {v}".format(k=header.lower(), v=value))
