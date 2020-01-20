@@ -22,14 +22,12 @@ class Crypto:
         key = self.load_pem_private_key(key, password=passphrase, backend=self.default_backend())
         if self.algorithm in {"rsa-sha1", "rsa-sha256"}:
             hasher = self.SHA1() if self.algorithm.endswith("sha1") else self.SHA256()
-            signer = key.signer(padding=self.PKCS1v15(), algorithm=hasher)
+            return key.sign(padding=self.PKCS1v15(), algorithm=hasher, data=string_to_sign)
         elif self.algorithm in {"rsa-sha512"}:
             hasher = self.SHA512()
-            signer = key.signer(padding=self.PKCS1v15(), algorithm=hasher)
+            return key.sign(padding=self.PKCS1v15(), algorithm=hasher, data=string_to_sign)
         elif self.algorithm == "ecdsa-sha256":
-            signer = key.signer(signature_algorithm=self.ec.ECDSA(algorithm=self.SHA256()))
-        signer.update(string_to_sign)
-        return signer.finalize()
+            return key.sign(signature_algorithm=self.ec.ECDSA(algorithm=self.SHA256()), data=string_to_sign)
 
     def verify(self, signature, string_to_sign, key):
         if self.algorithm == "hmac-sha256":
@@ -93,12 +91,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                 if header.lower() == "host":
                     url = urlparse(request.url)
                     value = request.headers.get("host", url.hostname)
-                    if (
-                        url.scheme == "http"
-                        and url.port not in [None, 80]
-                        or url.scheme == "https"
-                        and url.port not in [443, None]
-                    ):
+                    if url.scheme == "http" and url.port not in [None, 80] or url.scheme == "https" \
+                            and url.port not in [443, None]:
                         value = "{}:{}".format(value, url.port)
                 else:
                     value = request.headers[header]
