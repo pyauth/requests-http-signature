@@ -67,11 +67,16 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             request.headers["Date"] = email.utils.formatdate(timestamp, usegmt=True)
 
     def add_digest(self, request):
-        if request.body is not None and "Digest" not in request.headers:
-            if "digest" not in self.headers:
-                self.headers.append("digest")
-            digest = self.hasher_constructor(request.body).digest()
-            request.headers["Digest"] = "SHA-256=" + base64.b64encode(digest).decode()
+        if "Digest" not in request.headers:
+            if request.body is not None:
+                if "digest" not in self.headers:
+                    self.headers.append("digest")
+                digest = self.hasher_constructor(request.body).digest()
+                request.headers["Digest"] = "SHA-256=" + base64.b64encode(digest).decode()
+            else:
+                # Since the message body is empty, the digest is defaulted to the hash256 of an empty body.
+                request.headers["Digest"] = "SHA-256=47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+
 
     @classmethod
     def get_string_to_sign(self, request, headers):
