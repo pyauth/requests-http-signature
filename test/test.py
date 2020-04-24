@@ -9,19 +9,22 @@ from requests.adapters import HTTPAdapter
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) # noqa
 
-from requests_http_signature import HTTPSignatureAuth, RequestsHttpSignatureException
+from requests_http_signature import HTTPSignatureAuth, HTTPSignatureHeaderAuth, RequestsHttpSignatureException
 hmac_secret = b"monorail_cat"
 passphrase = b"passw0rd"
 
 class TestAdapter(HTTPAdapter):
     def __init__(self, testcase):
         self.testcase = testcase
+
     def send(self, request, *args, **kwargs):
         def key_resolver(key_id, algorithm):
             if "pubkey" in request.headers:
                 return base64.b64decode(request.headers["pubkey"])
             return hmac_secret
-        HTTPSignatureAuth.verify(request, key_resolver=key_resolver)
+        HTTPSignatureAuth.verify(request,
+                                 key_resolver=key_resolver,
+                                 scheme=request.headers.get("sigScheme", "Authorization"))
         if "expectSig" in request.headers:
             self.testcase.assertEqual(request.headers["expectSig"],
                                       HTTPSignatureAuth.get_sig_struct(request)["signature"])
@@ -82,6 +85,12 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             expect_sig = "DkOOyDlO9rXmOiU+k6L86N4UFEcey2YD+/Bz8c+Sr6XVDtDCxUuFEHMO+Atag/V1iLu+3KczVrCwjaZ39Ox3RufJghHzhTffyEkfPI6Ivf271mfRU9+wLxuGj9f+ATVO14nvcZyQjAMLvV7qh35zQcYdeD5XyxLLjuYUnK14rYI=" # noqa
             headers = {"Date": date, "pubkey": pubkey_b64, "expectSig": expect_sig, "content-type": "application/json"}
             self.session.post(url, json=payload, headers=headers, auth=auth)
+
+    #def test_signature_scheme(self):
+        auth = HTTPSignatureHeaderAuth(key=hmac_secret,
+                                       key_id="sekret",
+                                       headers=["(request-target)", "host", "date", "digest", "content-length"])
+        self.session.post(url, json=payload, headers={"Date": date, "sigScheme": "Signature"}, auth=auth)
 
     def test_rsa(self):
         from cryptography.hazmat.backends import default_backend

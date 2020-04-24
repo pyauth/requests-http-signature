@@ -109,16 +109,24 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         return request
 
     @classmethod
-    def get_sig_struct(self, request):
-        scheme, sig_struct = request.headers["Authorization"].split(" ", 1)
+    def get_sig_struct(self, request, scheme="Authorization"):
+        sig_struct = request.headers[scheme]
+        if scheme == "Authorization":
+            sig_struct = sig_struct.split(" ", 1)[1]
         return {i.split("=", 1)[0]: i.split("=", 1)[1].strip('"') for i in sig_struct.split(",")}
 
     @classmethod
-    def verify(self, request, key_resolver):
-        assert "Authorization" in request.headers, "No Authorization header found"
-        msg = 'Unexpected scheme found in Authorization header (expected "Signature")'
-        assert request.headers["Authorization"].startswith("Signature "), msg
-        sig_struct = self.get_sig_struct(request)
+    def verify(self, request, key_resolver, scheme="Authorization"):
+        if scheme == "Authorization":
+            assert "Authorization" in request.headers, "No Authorization header found"
+            msg = 'Unexpected scheme found in Authorization header (expected "Signature")'
+            assert request.headers["Authorization"].startswith("Signature "), msg
+        elif scheme == "Signature":
+            assert "Signature" in request.headers, "No Signature header found"
+        else:
+            raise RequestsHttpSignatureException('Unknown signature scheme "{}"'.format(scheme))
+
+        sig_struct = self.get_sig_struct(request, scheme=scheme)
         for field in "keyId", "algorithm", "signature":
             assert field in sig_struct, 'Required signature parameter "{}" not found'.format(field)
         assert sig_struct["algorithm"] in self.known_algorithms, "Unknown signature algorithm"
