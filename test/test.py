@@ -86,7 +86,6 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             headers = {"Date": date, "pubkey": pubkey_b64, "expectSig": expect_sig, "content-type": "application/json"}
             self.session.post(url, json=payload, headers=headers, auth=auth)
 
-    #def test_signature_scheme(self):
         auth = HTTPSignatureHeaderAuth(key=hmac_secret,
                                        key_id="sekret",
                                        headers=["(request-target)", "host", "date", "digest", "content-length"])
