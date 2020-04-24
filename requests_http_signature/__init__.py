@@ -5,6 +5,10 @@ import email.utils
 
 import requests
 from requests.compat import urlparse
+from requests.exceptions import RequestException
+
+class RequestsHttpSignatureException(RequestException):
+    """An error occurred while constructing the HTTP Signature for your request."""
 
 class Crypto:
     def __init__(self, algorithm):
@@ -67,6 +71,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             request.headers["Date"] = email.utils.formatdate(timestamp, usegmt=True)
 
     def add_digest(self, request):
+        if request.body is None and "digest" in self.headers:
+            raise RequestsHttpSignatureException("Could not compute digest header for request without a body")
         if request.body is not None and "Digest" not in request.headers:
             if "digest" not in self.headers:
                 self.headers.append("digest")

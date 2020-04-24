@@ -9,8 +9,7 @@ from requests.adapters import HTTPAdapter
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) # noqa
 
-from requests_http_signature import HTTPSignatureAuth
-
+from requests_http_signature import HTTPSignatureAuth, RequestsHttpSignatureException
 hmac_secret = b"monorail_cat"
 passphrase = b"passw0rd"
 
@@ -46,6 +45,10 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         self.session.get(url, auth=HTTPSignatureAuth(key=hmac_secret, key_id="sekret"))
         with self.assertRaises(AssertionError):
             self.session.get(url, auth=HTTPSignatureAuth(key=hmac_secret[::-1], key_id="sekret"))
+        with self.assertRaisesRegex(RequestsHttpSignatureException,
+                                    "Could not compute digest header for request without a body"):
+            self.session.get(url,
+                             auth=HTTPSignatureAuth(key=hmac_secret[::-1], key_id="sekret", headers=["date", "digest"]))
 
     def test_rfc_examples(self):
         # The date in the RFC is wrong (2014 instead of 2012).
