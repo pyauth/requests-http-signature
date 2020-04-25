@@ -43,6 +43,12 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         self.session = requests.Session()
         self.session.mount("http://", TestAdapter(self))
 
+    def test_readme_example(self):
+        preshared_key_id = 'squirrel'
+        preshared_secret = 'monorail_cat'
+        url = 'http://example.com/path'
+        requests.get(url, auth=HTTPSignatureAuth(key=preshared_secret, key_id=preshared_key_id))
+
     def test_basic_statements(self):
         url = 'http://example.com/path?query#fragment'
         self.session.get(url, auth=HTTPSignatureAuth(key=hmac_secret, key_id="sekret"))

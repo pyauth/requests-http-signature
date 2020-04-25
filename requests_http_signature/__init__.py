@@ -98,7 +98,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         self.add_date(request)
         self.add_digest(request)
         raw_sig = Crypto(self.algorithm).sign(string_to_sign=self.get_string_to_sign(request, self.headers),
-                                              key=self.key,
+                                              key=self.key.encode() if isinstance(self.key, str) else self.key,
                                               passphrase=self.passphrase)
         sig = base64.b64encode(raw_sig).decode()
         sig_struct = [("keyId", self.key_id),
