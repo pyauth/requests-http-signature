@@ -70,8 +70,8 @@ License
 -------
 Licensed under the terms of the `Apache License, Version 2.0 <http://www.apache.org/licenses/LICENSE-2.0>`_.
 
-.. image:: https://travis-ci.org/kislyuk/requests-http-signature.png
-        :target: https://travis-ci.org/kislyuk/requests-http-signature
+.. image:: https://github.com/pyauth/requests-http-signature/workflows/Python%20package/badge.svg
+        :target: https://github.com/pyauth/requests-http-signature/actions
 .. image:: https://codecov.io/github/kislyuk/requests-http-signature/coverage.svg?branch=master
         :target: https://codecov.io/github/kislyuk/requests-http-signature?branch=master
 .. image:: https://img.shields.io/pypi/v/requests-http-signature.svg
