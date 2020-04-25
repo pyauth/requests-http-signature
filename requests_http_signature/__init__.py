@@ -26,12 +26,14 @@ class Crypto:
         key = self.load_pem_private_key(key, password=passphrase, backend=self.default_backend())
         if self.algorithm in {"rsa-sha1", "rsa-sha256"}:
             hasher = self.SHA1() if self.algorithm.endswith("sha1") else self.SHA256()
-            return key.sign(string_to_sign, padding=self.PKCS1v15(), algorithm=hasher)
+            signer = key.signer(padding=self.PKCS1v15(), algorithm=hasher)
         elif self.algorithm in {"rsa-sha512"}:
             hasher = self.SHA512()
-            return key.sign(string_to_sign, padding=self.PKCS1v15(), algorithm=hasher)
+            signer = key.signer(padding=self.PKCS1v15(), algorithm=hasher)
         elif self.algorithm == "ecdsa-sha256":
-            return key.sign(string_to_sign, signature_algorithm=self.ec.ECDSA(algorithm=self.SHA256()))
+            signer = key.signer(signature_algorithm=self.ec.ECDSA(algorithm=self.SHA256()))
+        signer.update(string_to_sign)
+        return signer.finalize()
 
     def verify(self, signature, string_to_sign, key):
         if self.algorithm == "hmac-sha256":
