@@ -40,6 +40,7 @@ release:
 	$(MAKE) pypi_release
 
 pypi_release:
-	python setup.py sdist bdist_wheel upload --sign
+	python setup.py sdist bdist_wheel
+	twine upload dist/*.tar.gz dist/*.whl --sign --verbose
 
 .PHONY: release
