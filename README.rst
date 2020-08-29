@@ -52,7 +52,7 @@ constructor as bytes in the PEM format:
   with open('key.pem', 'rb') as fh:
       requests.get(url, auth=HTTPSignatureAuth(algorithm="rsa-sha256", key=fh.read(), key_id=preshared_key_id))
 
-When verifying, the ``key_resolver()`` callback should provide the public key as bytes in the PEM format as well:
+When verifying, the ``key_resolver()`` callback should provide the public key as bytes in the PEM format as well.
 
 Links
 -----
