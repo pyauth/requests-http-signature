@@ -1,3 +1,10 @@
+Changes for v0.2.0 (2020-08-29)
+===============================
+
+-  Implemented support for (created) and (expires) special headers (#14)
+
+-  Raise informative error when unable to compute body digest
+
 Changes for v0.1.0 (2018-11-05)
 ===============================
 

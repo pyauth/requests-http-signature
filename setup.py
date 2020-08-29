@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='requests-http-signature',
-    version='0.1.0',
+    version='0.2.0',
     url='https://github.com/kislyuk/requests-http-signature',
     license='Apache Software License',
     author='Andrey Kislyuk',
