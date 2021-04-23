@@ -123,8 +123,10 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             ("algorithm", self.algorithm),
             ("headers", " ".join(self.headers)),
             ("signature", sig),
-            ("created", int(created_timestamp)),
         ]
+        if not (self.algorithm.startswith("rsa") or self.algorithm.startswith("hmac") or
+                self.algorithm.startswith("ecdsa")):
+            sig_struct.append(("created", int(created_timestamp)))
         if expires_timestamp is not None:
             sig_struct.append(("expires", int(expires_timestamp)))
         return ",".join('{}="{}"'.format(k, v) for k, v in sig_struct)
