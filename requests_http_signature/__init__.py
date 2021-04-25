@@ -87,7 +87,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             if header == "(request-target)":
                 path_url = requests.models.RequestEncodingMixin.path_url.fget(request)
                 sts.append("{}: {} {}".format(header, request.method.lower(), path_url))
-            elif header == "(created)":
+            elif header == "(created)" and created_timestamp:
                 sts.append("{}: {}".format(header, created_timestamp))
             elif header == "(expires)":
                 assert (expires_timestamp is not None), \
@@ -123,8 +123,10 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             ("algorithm", self.algorithm),
             ("headers", " ".join(self.headers)),
             ("signature", sig),
-            ("created", int(created_timestamp)),
         ]
+        if not (self.algorithm.startswith("rsa") or self.algorithm.startswith("hmac") or
+                self.algorithm.startswith("ecdsa")):
+            sig_struct.append(("created", int(created_timestamp)))
         if expires_timestamp is not None:
             sig_struct.append(("expires", int(expires_timestamp)))
         return ",".join('{}="{}"'.format(k, v) for k, v in sig_struct)
@@ -155,7 +157,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         for field in "keyId", "algorithm", "signature":
             assert field in sig_struct, 'Required signature parameter "{}" not found'.format(field)
         assert sig_struct["algorithm"] in self.known_algorithms, "Unknown signature algorithm"
-        created_timestamp = int(sig_struct['created'])
+        created_timestamp = int(sig_struct['created']) if 'created' in sig_struct else None
         expires_timestamp = sig_struct.get('expires')
         if expires_timestamp is not None:
             expires_timestamp = int(expires_timestamp)
