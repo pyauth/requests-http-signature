@@ -176,3 +176,6 @@ class HTTPSignatureHeaderAuth(HTTPSignatureAuth):
     def __call__(self, request):
         request.headers["Signature"] = self.create_signature_string(request)
         return request
+
+    def verify(self, request, key_resolver):
+        return super().verify(request, key_resolver, scheme="Signature")
