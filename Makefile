@@ -2,7 +2,7 @@ test_deps:
 	pip install coverage flake8 wheel
 
 lint: test_deps
-	./setup.py flake8
+	flake8 $$(python setup.py --name | sed 's/-/_/g')
 
 test: test_deps lint
 	coverage run --source=$$(python setup.py --name | sed 's/-/_/g') ./test/test.py
