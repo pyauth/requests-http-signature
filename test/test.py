@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
-from __future__ import absolute_import, division, print_function, unicode_literals
+from __future__ import absolute_import, division, print_function
 
-import os, sys, unittest, json, logging, base64
+import os, sys, unittest, logging, base64
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -13,8 +13,10 @@ from requests_http_signature import HTTPSignatureAuth, HTTPSignatureHeaderAuth, 
 hmac_secret = b"monorail_cat"
 passphrase = b"passw0rd"
 
+
 class TestAdapter(HTTPAdapter):
     def __init__(self, testcase):
+        super(TestAdapter, self).__init__()
         self.testcase = testcase
 
     def send(self, request, *args, **kwargs):
@@ -33,12 +35,16 @@ class TestAdapter(HTTPAdapter):
         response.url = request.url
         return response
 
+
 class DigestlessSignatureAuth(HTTPSignatureAuth):
     def add_digest(self, request):
         pass
 
+
 class TestRequestsHTTPSignature(unittest.TestCase):
     def setUp(self):
+        if not hasattr(unittest.TestCase, 'assertRaisesRegex'):
+            setattr(unittest.TestCase, 'assertRaisesRegex', unittest.TestCase.assertRaisesRegexp)
         logging.basicConfig(level="DEBUG")
         self.session = requests.Session()
         self.session.mount("http://", TestAdapter(self))
