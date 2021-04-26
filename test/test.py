@@ -3,6 +3,7 @@
 from __future__ import absolute_import, division, print_function
 
 import os, sys, unittest, logging, base64
+from datetime import timedelta
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -64,6 +65,22 @@ class TestRequestsHTTPSignature(unittest.TestCase):
                                     "Could not compute digest header for request without a body"):
             self.session.get(url,
                              auth=HTTPSignatureAuth(key=hmac_secret[::-1], key_id="sekret", headers=["date", "digest"]))
+
+    def test_expired_signature(self):
+        with self.assertRaises(AssertionError):
+            preshared_key_id = 'squirrel'
+            preshared_secret = 'monorail_cat'
+            one_month = timedelta(days=-30)
+            headers = ["(expires)"]
+            auth = HTTPSignatureAuth(key=preshared_secret, key_id=preshared_key_id,
+                                     expires_in=one_month, headers=headers)
+
+            def key_resolver(key_id, algorithm):
+                return preshared_secret
+
+            url = 'http://example.com/path'
+            response = requests.get(url, auth=auth)
+            HTTPSignatureAuth.verify(response.request, key_resolver=key_resolver)
 
     def test_rfc_examples(self):
         # The date in the RFC is wrong (2014 instead of 2012).
