@@ -166,6 +166,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         sts = self.get_string_to_sign(request, headers, created_timestamp, expires_timestamp=expires_timestamp)
         key = key_resolver(key_id=sig_struct["keyId"], algorithm=sig_struct["algorithm"])
         Crypto(sig_struct["algorithm"]).verify(sig, sts, key)
+        if expires_timestamp is not None:
+            assert expires_timestamp > created_timestamp
+
 
 class HTTPSignatureHeaderAuth(HTTPSignatureAuth):
     """
