@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 import os, sys, unittest, logging, base64
 from datetime import timedelta
@@ -44,8 +44,6 @@ class DigestlessSignatureAuth(HTTPSignatureAuth):
 
 class TestRequestsHTTPSignature(unittest.TestCase):
     def setUp(self):
-        if not hasattr(unittest.TestCase, 'assertRaisesRegex'):
-            setattr(unittest.TestCase, 'assertRaisesRegex', unittest.TestCase.assertRaisesRegexp)
         logging.basicConfig(level="DEBUG")
         self.session = requests.Session()
         self.session.mount("http://", TestAdapter(self))
