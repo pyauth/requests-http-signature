@@ -6,6 +6,7 @@ import os, sys, unittest, logging, base64
 from datetime import timedelta
 
 import requests
+from cryptography.fernet import Fernet
 from requests.adapters import HTTPAdapter
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) # noqa
@@ -67,14 +68,14 @@ class TestRequestsHTTPSignature(unittest.TestCase):
     def test_expired_signature(self):
         with self.assertRaises(AssertionError):
             preshared_key_id = 'squirrel'
-            preshared_secret = 'monorail_cat'
+            key = Fernet.generate_key()
             one_month = timedelta(days=-30)
             headers = ["(expires)"]
-            auth = HTTPSignatureAuth(key=preshared_secret, key_id=preshared_key_id,
+            auth = HTTPSignatureAuth(key=key, key_id=preshared_key_id,
                                      expires_in=one_month, headers=headers)
 
             def key_resolver(key_id, algorithm):
-                return preshared_secret
+                return key
 
             url = 'http://example.com/path'
             response = requests.get(url, auth=auth)
