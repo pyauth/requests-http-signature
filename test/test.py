@@ -2,9 +2,11 @@
 
 from __future__ import absolute_import, division, print_function, unicode_literals
 
-import os, sys, unittest, json, logging, base64
+import os, sys, unittest, logging, base64
+from datetime import timedelta
 
 import requests
+from cryptography.fernet import Fernet
 from requests.adapters import HTTPAdapter
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) # noqa
@@ -13,8 +15,10 @@ from requests_http_signature import HTTPSignatureAuth, HTTPSignatureHeaderAuth, 
 hmac_secret = b"monorail_cat"
 passphrase = b"passw0rd"
 
+
 class TestAdapter(HTTPAdapter):
     def __init__(self, testcase):
+        super(TestAdapter, self).__init__()
         self.testcase = testcase
 
     def send(self, request, *args, **kwargs):
@@ -33,9 +37,11 @@ class TestAdapter(HTTPAdapter):
         response.url = request.url
         return response
 
+
 class DigestlessSignatureAuth(HTTPSignatureAuth):
     def add_digest(self, request):
         pass
+
 
 class TestRequestsHTTPSignature(unittest.TestCase):
     def setUp(self):
@@ -58,6 +64,22 @@ class TestRequestsHTTPSignature(unittest.TestCase):
                                     "Could not compute digest header for request without a body"):
             self.session.get(url,
                              auth=HTTPSignatureAuth(key=hmac_secret[::-1], key_id="sekret", headers=["date", "digest"]))
+
+    def test_expired_signature(self):
+        with self.assertRaises(AssertionError):
+            preshared_key_id = 'squirrel'
+            key = Fernet.generate_key()
+            one_month = timedelta(days=-30)
+            headers = ["(expires)"]
+            auth = HTTPSignatureAuth(key=key, key_id=preshared_key_id,
+                                     expires_in=one_month, headers=headers)
+
+            def key_resolver(key_id, algorithm):
+                return key
+
+            url = 'http://example.com/path'
+            response = requests.get(url, auth=auth)
+            HTTPSignatureAuth.verify(response.request, key_resolver=key_resolver)
 
     def test_rfc_examples(self):
         # The date in the RFC is wrong (2014 instead of 2012).
