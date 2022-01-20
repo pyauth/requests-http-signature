@@ -82,9 +82,10 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         return request.body
 
     def add_digest(self, request):
-        if request.body is None and "digest" in self.headers:
+        content = self.digest_content
+        if content is None and "digest" in self.headers:
             raise RequestsHttpSignatureException("Could not compute digest header for request without a body")
-        if request.body is not None and "Digest" not in request.headers:
+        if content is not None and "Digest" not in request.headers:
             if "digest" not in self.headers:
                 self.headers.append("digest")
             hash = hashlib.new(self.digest_alg)
