@@ -1,184 +1,130 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
-
-import base64, hashlib, hmac, time
+import datetime
 import email.utils
+import hashlib
+import secrets
+from typing import List
 
+import http_sfv
 import requests
-from requests.compat import urlparse
+
 from requests.exceptions import RequestException
+from http_message_signatures import (algorithms, HTTPSignatureComponentResolver, HTTPSignatureKeyResolver,  # noqa: F401
+                                     HTTPMessageSigner, HTTPMessageVerifier, HTTPSignatureAlgorithm, InvalidSignature)
+from http_message_signatures.structures import CaseInsensitiveDict
+
 
 class RequestsHttpSignatureException(RequestException):
     """An error occurred while constructing the HTTP Signature for your request."""
 
-class Crypto:
-    def __init__(self, algorithm):
-        if algorithm != "hmac-sha256":
-            from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key
-            from cryptography.hazmat.backends import default_backend
-            from cryptography.hazmat.primitives.asymmetric import rsa, ec
-            from cryptography.hazmat.primitives.asymmetric.padding import PKCS1v15
-            from cryptography.hazmat.primitives.hashes import SHA1, SHA256, SHA512
-        self.__dict__.update(locals())
 
-    def sign(self, string_to_sign, key, passphrase=None):
-        if self.algorithm == "hmac-sha256":
-            return hmac.new(key, string_to_sign, digestmod=hashlib.sha256).digest()
-        key = self.load_pem_private_key(key, password=passphrase, backend=self.default_backend())
-        if self.algorithm in {"rsa-sha1", "rsa-sha256"}:
-            hasher = self.SHA1() if self.algorithm.endswith("sha1") else self.SHA256()
-            return key.sign(padding=self.PKCS1v15(), algorithm=hasher, data=string_to_sign)
-        elif self.algorithm in {"rsa-sha512"}:
-            hasher = self.SHA512()
-            return key.sign(padding=self.PKCS1v15(), algorithm=hasher, data=string_to_sign)
-        elif self.algorithm == "ecdsa-sha256":
-            return key.sign(signature_algorithm=self.ec.ECDSA(algorithm=self.SHA256()), data=string_to_sign)
+class SingleKeyResolver(HTTPSignatureKeyResolver):
+    def __init__(self, key_id, key):
+        self.key_id = key_id
+        self.key = key
 
-    def verify(self, signature, string_to_sign, key):
-        if self.algorithm == "hmac-sha256":
-            assert signature == hmac.new(key, string_to_sign, digestmod=hashlib.sha256).digest()
-        else:
-            key = self.load_pem_public_key(key, backend=self.default_backend())
-            hasher = self.SHA1() if self.algorithm.endswith("sha1") else self.SHA256()
-            if self.algorithm == "ecdsa-sha256":
-                key.verify(signature, string_to_sign, self.ec.ECDSA(hasher))
-            else:
-                key.verify(signature, string_to_sign, self.PKCS1v15(), hasher)
+    def resolve_public_key(self, key_id):
+        assert key_id == self.key_id
+        return self.key
+
+    def resolve_private_key(self, key_id):
+        assert key_id == self.key_id
+        return self.key
+
 
 class HTTPSignatureAuth(requests.auth.AuthBase):
+    hasher_name = "sha-256"
     hasher_constructor = hashlib.sha256
-    known_algorithms = {
-        "rsa-sha1",
-        "rsa-sha256",
-        "rsa-sha512",
-        "hmac-sha256",
-        "ecdsa-sha256",
-    }
 
-    def __init__(self, key, key_id, algorithm="hmac-sha256", headers=None, passphrase=None, expires_in=None):
-        """
-        :param typing.Union[bytes, string] passphrase: The passphrase for an encrypted RSA private key
-        :param datetime.timedelta expires_in: The time after which this signature should expire
-        """
-        assert algorithm in self.known_algorithms
-        self.key = key
+    def __init__(self, *,
+                 key: bytes = None,
+                 key_id: str,
+                 label: str = None,
+                 include_alg: bool = True,
+                 use_nonce: bool = False,
+                 covered_component_ids: List[str] = ("@method", "@authority", "@target-uri"),
+                 expires_in: datetime.timedelta = None,
+                 signature_algorithm: HTTPSignatureAlgorithm,
+                 key_resolver: HTTPSignatureKeyResolver = None,
+                 component_resolver_class: type = HTTPSignatureComponentResolver):
+        if key_resolver is None and key is None:
+            raise RequestsHttpSignatureException("Either key_resolver or key must be specified.")
+        if key_resolver is not None and key is not None:
+            raise RequestsHttpSignatureException("Either key_resolver or key must be specified, not both.")
+        if key_resolver is None:
+            key_resolver = SingleKeyResolver(key_id=key_id, key=key)
+
         self.key_id = key_id
-        self.algorithm = algorithm
-        self.headers = [h.lower() for h in headers] if headers is not None else ["date"]
-        self.passphrase = passphrase if passphrase is None or isinstance(passphrase, bytes) else passphrase.encode()
+        self.label = label
+        self.include_alg = include_alg
+        self.use_nonce = use_nonce
+        self.covered_component_ids = covered_component_ids
         self.expires_in = expires_in
+        handler_args = dict(signature_algorithm=signature_algorithm,
+                            key_resolver=key_resolver,
+                            component_resolver_class=component_resolver_class)
+        self.signer = HTTPMessageSigner(**handler_args)
 
     def add_date(self, request, timestamp):
         if "Date" not in request.headers:
             request.headers["Date"] = email.utils.formatdate(timestamp, usegmt=True)
 
     def add_digest(self, request):
-        if request.body is None and "digest" in self.headers:
+        if request.body is None and "content-digest" in self.covered_component_ids:
             raise RequestsHttpSignatureException("Could not compute digest header for request without a body")
-        if request.body is not None and "Digest" not in request.headers:
-            if "digest" not in self.headers:
-                self.headers.append("digest")
+        if request.body is not None and "Content-Digest" not in request.headers:
+            if "content-digest" not in self.covered_component_ids:
+                self.covered_component_ids = list(self.covered_component_ids) + ["content-digest"]
             digest = self.hasher_constructor(request.body).digest()
-            request.headers["Digest"] = "SHA-256=" + base64.b64encode(digest).decode()
+            digest_node = http_sfv.Dictionary({self.hasher_name: digest})
+            request.headers["Content-Digest"] = str(digest_node)
 
-    @classmethod
-    def get_string_to_sign(self, request, headers, created_timestamp, expires_timestamp):
-        sts = []
-        for header in headers:
-            if header == "(request-target)":
-                path_url = requests.models.RequestEncodingMixin.path_url.fget(request)
-                sts.append("{}: {} {}".format(header, request.method.lower(), path_url))
-            elif header == "(created)" and created_timestamp:
-                sts.append("{}: {}".format(header, created_timestamp))
-            elif header == "(expires)":
-                assert (expires_timestamp is not None), \
-                    'You should provide the "expires_in" argument when using the (expires) header'
-                sts.append("{}: {}".format(header, int(expires_timestamp)))
-            else:
-                if header.lower() == "host":
-                    url = urlparse(request.url)
-                    value = request.headers.get("host", url.hostname)
-                    if url.scheme == "http" and url.port not in [None, 80] or url.scheme == "https" \
-                            and url.port not in [443, None]:
-                        value = "{}:{}".format(value, url.port)
-                else:
-                    value = request.headers[header]
-                sts.append("{k}: {v}".format(k=header.lower(), v=value))
-        return "\n".join(sts).encode()
+    def get_nonce(self, request):
+        if self.use_nonce:
+            return secrets.token_urlsafe(16)
 
-    def create_signature_string(self, request):
-        created_timestamp = int(time.time())
-        expires_timestamp = None
-        if self.expires_in is not None:
-            expires_timestamp = created_timestamp + self.expires_in.total_seconds()
-        self.add_date(request, created_timestamp)
+    def get_created(self, request):
+        created = datetime.datetime.now()
+        self.add_date(request, timestamp=int(created.timestamp()))
+        # TODO: add Date to covered components
+        return created
+
+    def get_expires(self, request, created):
+        if self.expires_in:
+            return datetime.datetime.now() + self.expires_in
+
+    def __call__(self, request):
         self.add_digest(request)
-        raw_sig = Crypto(self.algorithm).sign(
-            string_to_sign=self.get_string_to_sign(request, self.headers, created_timestamp, expires_timestamp),
-            key=self.key.encode() if isinstance(self.key, str) else self.key,
-            passphrase=self.passphrase,
-        )
-        sig = base64.b64encode(raw_sig).decode()
-        sig_struct = [
-            ("keyId", self.key_id),
-            ("algorithm", self.algorithm),
-            ("headers", " ".join(self.headers)),
-            ("signature", sig),
-        ]
-        if not (self.algorithm.startswith("rsa") or self.algorithm.startswith("hmac") or
-                self.algorithm.startswith("ecdsa")):
-            sig_struct.append(("created", int(created_timestamp)))
-        if expires_timestamp is not None:
-            sig_struct.append(("expires", int(expires_timestamp)))
-        return ",".join('{}="{}"'.format(k, v) for k, v in sig_struct)
-
-    def __call__(self, request):
-        request.headers["Authorization"] = "Signature " + self.create_signature_string(request)
+        created = self.get_created(request)
+        expires = self.get_expires(request, created=created)
+        self.signer.sign(request,
+                         key_id=self.key_id,
+                         created=created,
+                         expires=expires,
+                         nonce=self.get_nonce(request),
+                         label=self.label,
+                         include_alg=self.include_alg,
+                         covered_component_ids=self.covered_component_ids)
         return request
 
     @classmethod
-    def get_sig_struct(self, request, scheme="Authorization"):
-        sig_struct = request.headers[scheme]
-        if scheme == "Authorization":
-            sig_struct = sig_struct.split(" ", 1)[1]
-        return {i.split("=", 1)[0]: i.split("=", 1)[1].strip('"') for i in sig_struct.split(",")}
-
-    @classmethod
-    def verify(self, request, key_resolver, scheme="Authorization"):
-        if scheme == "Authorization":
-            assert "Authorization" in request.headers, "No Authorization header found"
-            msg = 'Unexpected scheme found in Authorization header (expected "Signature")'
-            assert request.headers["Authorization"].startswith("Signature "), msg
-        elif scheme == "Signature":
-            assert "Signature" in request.headers, "No Signature header found"
-        else:
-            raise RequestsHttpSignatureException('Unknown signature scheme "{}"'.format(scheme))
-
-        sig_struct = self.get_sig_struct(request, scheme=scheme)
-        for field in "keyId", "algorithm", "signature":
-            assert field in sig_struct, 'Required signature parameter "{}" not found'.format(field)
-        assert sig_struct["algorithm"] in self.known_algorithms, "Unknown signature algorithm"
-        created_timestamp = int(sig_struct['created']) if 'created' in sig_struct else None
-        expires_timestamp = sig_struct.get('expires')
-        if expires_timestamp is not None:
-            expires_timestamp = int(expires_timestamp)
-        headers = sig_struct.get("headers", "date").split(" ")
-        sig = base64.b64decode(sig_struct["signature"])
-        sts = self.get_string_to_sign(request, headers, created_timestamp, expires_timestamp=expires_timestamp)
-        key = key_resolver(key_id=sig_struct["keyId"], algorithm=sig_struct["algorithm"])
-        Crypto(sig_struct["algorithm"]).verify(sig, sts, key)
-        if expires_timestamp is not None:
-            assert expires_timestamp > int(time.time())
-
-
-class HTTPSignatureHeaderAuth(HTTPSignatureAuth):
-    """
-        https://tools.ietf.org/html/draft-cavage-http-signatures-08#section-4
-        Using "Signature" header instead of "Authorization" header.
-    """
-
-    def __call__(self, request):
-        request.headers["Signature"] = self.create_signature_string(request)
-        return request
-
-    def verify(self, request, key_resolver):
-        return super().verify(request, key_resolver, scheme="Signature")
+    def verify(cls, request, *,
+               signature_algorithm: HTTPSignatureAlgorithm,
+               key_resolver: HTTPSignatureKeyResolver,
+               component_resolver_class: type = HTTPSignatureComponentResolver):
+        verifier = HTTPMessageVerifier(signature_algorithm=signature_algorithm,
+                                       key_resolver=key_resolver,
+                                       component_resolver_class=component_resolver_class)
+        verifier.verify(request)
+        headers = CaseInsensitiveDict(request.headers)
+        if "content-digest" in headers:
+            if request.body is None:
+                raise InvalidSignature("Found a content-digest header in a request with no body")
+            digest = http_sfv.Dictionary()
+            digest.parse(headers["content-digest"].encode())
+            for k, v in digest.items():
+                if k != cls.hasher_name:
+                    raise InvalidSignature(f'Unsupported digest algorithm "{k}"')
+                raw_digest = v.value
+            expect_digest = cls.hasher_constructor(request.body).digest()
+            if raw_digest != expect_digest:
+                raise InvalidSignature("The content-digest header does not match the request body")

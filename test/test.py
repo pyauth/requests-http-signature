@@ -1,37 +1,31 @@
 #!/usr/bin/env python
 
-from __future__ import absolute_import, division, print_function, unicode_literals
-
 import os, sys, unittest, logging, base64
-from datetime import timedelta
 
 import requests
-from cryptography.fernet import Fernet
 from requests.adapters import HTTPAdapter
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) # noqa
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from requests_http_signature import HTTPSignatureAuth, HTTPSignatureHeaderAuth, RequestsHttpSignatureException
+from requests_http_signature import algorithms, HTTPSignatureAuth  # noqa: E402
+from http_message_signatures import InvalidSignature  # noqa: E402
+
+logging.basicConfig(level="DEBUG")
+
+default_keyid = "my_key_id"
 hmac_secret = b"monorail_cat"
 passphrase = b"passw0rd"
 
 
 class TestAdapter(HTTPAdapter):
-    def __init__(self, testcase):
-        super(TestAdapter, self).__init__()
-        self.testcase = testcase
+    def __init__(self, auth):
+        super().__init__()
+        self.client_auth = auth
 
     def send(self, request, *args, **kwargs):
-        def key_resolver(key_id, algorithm):
-            if "pubkey" in request.headers:
-                return base64.b64decode(request.headers["pubkey"])
-            return hmac_secret
         HTTPSignatureAuth.verify(request,
-                                 key_resolver=key_resolver,
-                                 scheme=request.headers.get("sigScheme", "Authorization"))
-        if "expectSig" in request.headers:
-            self.testcase.assertEqual(request.headers["expectSig"],
-                                      HTTPSignatureAuth.get_sig_struct(request)["signature"])
+                                 signature_algorithm=self.client_auth.signer.signature_algorithm,
+                                 key_resolver=self.client_auth.signer.key_resolver)
         response = requests.Response()
         response.status_code = requests.codes.ok
         response.url = request.url
@@ -45,80 +39,24 @@ class DigestlessSignatureAuth(HTTPSignatureAuth):
 
 class TestRequestsHTTPSignature(unittest.TestCase):
     def setUp(self):
-        logging.basicConfig(level="DEBUG")
         self.session = requests.Session()
-        self.session.mount("http://", TestAdapter(self))
-
-    def test_readme_example(self):
-        preshared_key_id = 'squirrel'
-        preshared_secret = 'monorail_cat'
-        url = 'http://example.com/path'
-        requests.get(url, auth=HTTPSignatureAuth(key=preshared_secret, key_id=preshared_key_id))
+        self.auth = HTTPSignatureAuth(key_id=default_keyid, key=hmac_secret, signature_algorithm=algorithms.HMAC_SHA256)
+        self.session.mount("http://", TestAdapter(self.auth))
 
     def test_basic_statements(self):
         url = 'http://example.com/path?query#fragment'
-        self.session.get(url, auth=HTTPSignatureAuth(key=hmac_secret, key_id="sekret"))
-        with self.assertRaises(AssertionError):
-            self.session.get(url, auth=HTTPSignatureAuth(key=hmac_secret[::-1], key_id="sekret"))
-        with self.assertRaisesRegex(RequestsHttpSignatureException,
-                                    "Could not compute digest header for request without a body"):
-            self.session.get(url,
-                             auth=HTTPSignatureAuth(key=hmac_secret[::-1], key_id="sekret", headers=["date", "digest"]))
+        self.session.get(url, auth=self.auth)
+        self.auth.signer.key_resolver.resolve_public_key = lambda k: b"abc"
+        with self.assertRaises(InvalidSignature):
+            self.session.get(url, auth=self.auth)
+        self.auth.signer.key_resolver.resolve_private_key = lambda k: b"abc"
+        self.session.get(url, auth=self.auth)
+        self.session.post(url, auth=self.auth, data=b"xyz")
 
     def test_expired_signature(self):
-        with self.assertRaises(AssertionError):
-            preshared_key_id = 'squirrel'
-            key = Fernet.generate_key()
-            one_month = timedelta(days=-30)
-            headers = ["(expires)"]
-            auth = HTTPSignatureAuth(key=key, key_id=preshared_key_id,
-                                     expires_in=one_month, headers=headers)
+        "TODO"
 
-            def key_resolver(key_id, algorithm):
-                return key
-
-            url = 'http://example.com/path'
-            response = requests.get(url, auth=auth)
-            HTTPSignatureAuth.verify(response.request, key_resolver=key_resolver)
-
-    def test_rfc_examples(self):
-        # The date in the RFC is wrong (2014 instead of 2012).
-        # See https://github.com/joyent/node-http-signature/issues/54
-        # Also, the values in https://github.com/joyent/node-http-signature/blob/master/test/verify.test.js don't match
-        # up with ours. This is because node-http-signature seems to compute the content-length incorrectly in its test
-        # suite (it should be 18, but they use 17).
-        url = 'http://example.org/foo'
-        payload = {"hello": "world"}
-        date = "Thu, 05 Jan 2012 21:31:40 GMT"
-        auth = HTTPSignatureAuth(key=hmac_secret,
-                                 key_id="sekret",
-                                 headers=["(request-target)", "host", "date", "digest", "content-length"])
-        self.session.post(url, json=payload, headers={"Date": date}, auth=auth)
-
-        pubkey_fn = os.path.join(os.path.dirname(__file__), "pubkey.pem")
-        privkey_fn = os.path.join(os.path.dirname(__file__), "privkey.pem")
-        url = "http://example.com/foo?param=value&pet=dog"
-
-        with open(pubkey_fn, "rb") as pubkey, open(privkey_fn, "rb") as privkey:
-            pubkey_b64 = base64.b64encode(pubkey.read())
-            auth = DigestlessSignatureAuth(algorithm="rsa-sha256", key=privkey.read(), key_id="Test")
-            expect_sig = "ATp0r26dbMIxOopqw0OfABDT7CKMIoENumuruOtarj8n/97Q3htHFYpH8yOSQk3Z5zh8UxUym6FYTb5+A0Nz3NRsXJibnYi7brE/4tx5But9kkFGzG+xpUmimN4c3TMN7OFH//+r8hBf7BT9/GmHDUVZT2JzWGLZES2xDOUuMtA=" # noqa
-            headers = {"Date": date, "pubkey": pubkey_b64, "expectSig": expect_sig}
-            self.session.post(url, json=payload, headers=headers, auth=auth)
-
-        with open(pubkey_fn, "rb") as pubkey, open(privkey_fn, "rb") as privkey:
-            pubkey_b64 = base64.b64encode(pubkey.read())
-            auth = HTTPSignatureAuth(algorithm="rsa-sha256", key=privkey.read(), key_id="Test",
-                                     headers="(request-target) host date content-type digest content-length".split())
-            expect_sig = "DkOOyDlO9rXmOiU+k6L86N4UFEcey2YD+/Bz8c+Sr6XVDtDCxUuFEHMO+Atag/V1iLu+3KczVrCwjaZ39Ox3RufJghHzhTffyEkfPI6Ivf271mfRU9+wLxuGj9f+ATVO14nvcZyQjAMLvV7qh35zQcYdeD5XyxLLjuYUnK14rYI=" # noqa
-            headers = {"Date": date, "pubkey": pubkey_b64, "expectSig": expect_sig, "content-type": "application/json"}
-            self.session.post(url, json=payload, headers=headers, auth=auth)
-
-        auth = HTTPSignatureHeaderAuth(key=hmac_secret,
-                                       key_id="sekret",
-                                       headers=["(request-target)", "host", "date", "digest", "content-length"])
-        self.session.post(url, json=payload, headers={"Date": date, "sigScheme": "Signature"}, auth=auth)
-
+    @unittest.skip("TODO")
     def test_rsa(self):
         from cryptography.hazmat.backends import default_backend
         from cryptography.hazmat.primitives.asymmetric import rsa

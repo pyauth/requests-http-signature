@@ -1,27 +1,22 @@
-test_deps:
-	pip install coverage flake8 wheel
+SHELL=/bin/bash
 
-lint: test_deps
-	flake8 $$(python setup.py --name | sed 's/-/_/g')
+lint:
+	flake8
 
-test: test_deps lint
-	coverage run --source=$$(python setup.py --name | sed 's/-/_/g') ./test/test.py
+test: lint
+	python ./test/test.py -v
 
 init_docs:
 	cd docs; sphinx-quickstart
 
 docs:
-	$(MAKE) -C docs html
+	sphinx-build docs docs/html
 
-install: clean
-	pip install wheel
-	python setup.py bdist_wheel
+install:
+	-rm -rf dist
+	python -m build
 	pip install --upgrade dist/*.whl
 
-clean:
-	-rm -rf build dist
-	-rm -rf *.egg-info
-
-.PHONY: lint test test_deps docs install clean
+.PHONY: test lint release docs
 
 include common.mk
