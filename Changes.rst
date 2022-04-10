@@ -1,3 +1,10 @@
+Changes for v0.3.0 (2022-04-10)
+===============================
+
+-  Update package to follow the latest draft
+
+-  Test and release infrastructure updates
+
 Changes for v0.2.0 (2020-08-29)
 ===============================
 
