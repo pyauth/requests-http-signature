@@ -44,6 +44,7 @@ incoming requests:
 
   HTTPSignatureAuth.verify(request, signature_algorithm=algorithms.HMAC_SHA256, key_resolver=key_resolver)
 
+See the `API documentation <https://pyauth.github.io/requests-http-signature/#api-documentation>`_ for full detials.
 
 Asymmetric key algorithms
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -77,6 +78,7 @@ Links
 * `http-message-signatures <https://github.com/pyauth/http-message-signatures>`_ - a dependency of this library that
   handles much of the implementation
 * `Project home page (GitHub) <https://github.com/pyauth/requests-http-signature>`_
+* `Package documentation <https://pyauth.github.io/requests-http-signature/>`_
 * `Package distribution (PyPI) <https://pypi.python.org/pypi/requests-http-signature>`_
 * `Change log <https://github.com/pyauth/requests-http-signature/blob/master/Changes.rst>`_
 
