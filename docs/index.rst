@@ -5,7 +5,6 @@ API documentation
 
 .. automodule:: requests_http_signature
    :members:
-   :special-members:
 
 .. toctree::
    :maxdepth: 2
