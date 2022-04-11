@@ -185,8 +185,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             ``requests_http_signature.algorithms.RSA_PSS_SHA512``, or
             ``requests_http_signature.algorithms.RSA_V1_5_SHA256``.
         :param key_resolver:
-            Instead of specifying a fixed key, you can instead pass a key resolver, which should be an instance of a
-            subclass of ``http_message_signatures.HTTPSignatureKeyResolver``. A key resolver should have two methods,
+            A key resolver, which should be an instance of a subclass of
+            ``http_message_signatures.HTTPSignatureKeyResolver``. A key resolver should have two methods,
             ``get_private_key(key_id)`` (required only for signing) and ``get_public_key(key_id)`` (required only for
             verifying). Your implementation should ensure that the key id is recognized and return the corresponding
             key material as PEM bytes (or shared secret bytes for HMAC).
