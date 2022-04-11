@@ -57,7 +57,7 @@ incoming requests:
 
    verify_result = HTTPSignatureAuth.verify(request, ...)
 
-See the `API documentation <https://pyauth.github.io/requests-http-signature/#api-documentation>`_ for full details.
+See the `API documentation <https://pyauth.github.io/requests-http-signature/#id1>`_ for full details.
 
 Asymmetric key algorithms
 ~~~~~~~~~~~~~~~~~~~~~~~~~
