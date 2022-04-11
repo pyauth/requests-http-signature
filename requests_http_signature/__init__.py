@@ -170,9 +170,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         :param require_components:
             A list of lowercased header names or derived component IDs ("@method", "@target-uri", "@authority",
             "@scheme", "@request-target", "@path", "@query", "@query-params", "@status", or "@request-response" as
-            specified in the standard) to require to be covered by the signature. If the "content-digest" is
-            specified here (recommended for requests that have a body), it will be verified by matching it against the
-            digest hash computed on the body of the request (expected to be bytes).
+            specified in the standard) to require to be covered by the signature. If the "content-digest" header field
+            is specified here (recommended for requests that have a body), it will be verified by matching it against
+            the digest hash computed on the body of the request (expected to be bytes).
 
             If this parameter is not specified, ``verify()`` will set it to ("@method", "@authority", "@target-uri")
             for requests without a body, and ("@method", "@authority", "@target-uri", "content-digest") for requests
