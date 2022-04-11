@@ -148,7 +148,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         return request
 
     @classmethod
-    def verify(cls, request, *,
+    def verify(cls, request: requests.PreparedRequest, *,
                require_components: List[str] = ("@method", "@authority", "@target-uri"),
                signature_algorithm: HTTPSignatureAlgorithm,
                key_resolver: HTTPSignatureKeyResolver):
