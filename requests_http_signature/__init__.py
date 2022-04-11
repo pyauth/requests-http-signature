@@ -166,7 +166,14 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
          You can ensure that the information signed is what you expect to be signed by only trusting the *VerifyResult*
          tuple returned by ``verify()``.
 
-        :param request: The HTTP request to verify.
+        :param request:
+            The HTTP request to verify. You can reconstruct an incoming request using the
+            `Requests API <https://docs.python-requests.org/en/latest/api/#requests.Request>`_ as follows::
+
+              request = requests.Request(...)
+              request = request.prepare()
+              HTTPSignatureAuth.verify(request, ...)
+
         :param require_components:
             A list of lowercased header names or derived component IDs ("@method", "@target-uri", "@authority",
             "@scheme", "@request-target", "@path", "@query", "@query-params", "@status", or "@request-response" as

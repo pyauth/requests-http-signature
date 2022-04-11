@@ -42,6 +42,8 @@ incoming requests:
           assert key_id == 'squirrel'
           return 'monorail_cat'
 
+  request = requests.Request(...)  # Reconstruct the incoming request using the Requests API
+  request = request.prepare()
   HTTPSignatureAuth.verify(request, signature_algorithm=algorithms.HMAC_SHA256, key_resolver=key_resolver)
 
 .. admonition:: See what is signed
