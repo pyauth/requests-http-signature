@@ -88,6 +88,7 @@ constructor as bytes in the PEM format, or configure the key resolver as follows
 Digest algorithms
 ~~~~~~~~~~~~~~~~~
 The library supports SHA-512 digests via subclassing::
+
   class MySigner(HTTPSignatureAuth):
       def add_digest(self, request):
           super().add_digest(request, algorithm="sha-512")
