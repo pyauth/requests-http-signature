@@ -44,7 +44,20 @@ incoming requests:
 
   HTTPSignatureAuth.verify(request, signature_algorithm=algorithms.HMAC_SHA256, key_resolver=key_resolver)
 
-See the `API documentation <https://pyauth.github.io/requests-http-signature/#api-documentation>`_ for full detials.
+.. admonition:: See what is signed
+
+ It is important to understand and follow the best practice rule of "See what is signed" when verifying HTTP message
+ signatures. The gist of this rule is: if your application neglects to verify that the information it trusts is
+ what was actually signed, the attacker can supply a valid signature but point you to malicious data that wasn't signed
+ by that signature. Failure to follow this rule can lead to vulnerability against signature wrapping and substitution
+ attacks.
+
+ In requests-http-signature, you can ensure that the information signed is what you expect to be signed by only trusting
+ the data returned by the ``verify()`` method::
+
+   verify_result = HTTPSignatureAuth.verify(request, ...)
+
+See the `API documentation <https://pyauth.github.io/requests-http-signature/#api-documentation>`_ for full details.
 
 Asymmetric key algorithms
 ~~~~~~~~~~~~~~~~~~~~~~~~~

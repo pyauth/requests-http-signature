@@ -10,7 +10,6 @@ import requests
 from requests.exceptions import RequestException
 from http_message_signatures import (algorithms, HTTPSignatureComponentResolver, HTTPSignatureKeyResolver,  # noqa: F401
                                      HTTPMessageSigner, HTTPMessageVerifier, HTTPSignatureAlgorithm, InvalidSignature)
-from http_message_signatures.structures import CaseInsensitiveDict
 
 
 class RequestsHttpSignatureException(RequestException):
@@ -147,14 +146,38 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
 
     @classmethod
     def verify(cls, request, *,
+               require_components: List[str] = ("@method", "@authority", "@target-uri"),
                signature_algorithm: HTTPSignatureAlgorithm,
                key_resolver: HTTPSignatureKeyResolver,
                component_resolver_class: type = HTTPSignatureComponentResolver):
         """
         Verify an HTTP message signature.
 
+        .. admonition:: See what is signed
+
+         It is important to understand and follow the best practice rule of "See what is signed" when verifying HTTP
+         message signatures. The gist of this rule is: if your application neglects to verify that the information it
+         trusts is what was actually signed, the attacker can supply a valid signature but point you to malicious data
+         that wasn't signed by that signature. Failure to follow this rule can lead to vulnerability against signature
+         wrapping and substitution attacks.
+
+         You can ensure that the information signed is what you expect to be signed by only trusting the *VerifyResult*
+         tuple returned by ``verify()``.
+
+        :param request: The HTTP request to verify.
+        :param require_components:
+            A list of lowercased header names or derived component IDs ("@method", "@target-uri", "@authority",
+            "@scheme", "@request-target", "@path", "@query", "@query-params", "@status", or "@request-response" as
+            specified in the standard) to require to be covered by the signature. If the "content-digest" is
+            specified here (recommended for requests that have a body), it will be verified by matching it against the
+            digest hash computed on the body of the request (expected to be bytes).
+
+            If this parameter is not specified, ``verify()`` will set it to ("@method", "@authority", "@target-uri")
+            for requests without a body, and ("@method", "@authority", "@target-uri", "content-digest") for requests
+            with a body.
         :param signature_algorithm:
-            One of ``requests_http_signature.algorithms.HMAC_SHA256``,
+            The algorithm expected to be used by the signature. Any signature not using the expected algorithm will be
+            rejected. One of ``requests_http_signature.algorithms.HMAC_SHA256``,
             ``requests_http_signature.algorithms.ECDSA_P256_SHA256``,
             ``requests_http_signature.algorithms.ED25519``,
             ``requests_http_signature.algorithms.RSA_PSS_SHA512``, or
@@ -168,25 +191,44 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         :param component_resolver_class:
             Use this to subclass ``http_message_signatures.HTTPSignatureComponentResolver`` and customize header and
             derived component retrieval if needed.
+
+        :returns: *VerifyResult*, a namedtuple with the following attributes:
+
+            * ``label`` (str): The label for the signature
+            * ``algorithm``: (same as ``signature_algorithm`` above)
+            * ``covered_components``: A mapping of component names to their values, as covered by the signature
+            * ``parameters``: A mapping of signature parameters to their values, as covered by the signature
+
+        :raises: ``InvalidSignature`` - raised whenever signature validation fails for any reason.
         """
+        if request.body is not None:
+            if "content-digest" not in require_components and '"content-digest"' not in require_components:
+                require_components = list(require_components) + ["content-digest"]
+
         verifier = HTTPMessageVerifier(signature_algorithm=signature_algorithm,
                                        key_resolver=key_resolver,
                                        component_resolver_class=component_resolver_class)
-        verify_result = verifier.verify(request)
-        # TODO: get content-digest from verify result, not from independent parsing of headers
-        # TODO: add options to require specific components
-        headers = CaseInsensitiveDict(request.headers)
-        if "content-digest" in headers:
-            if request.body is None:
-                raise InvalidSignature("Found a content-digest header in a request with no body")
-            digest = http_sfv.Dictionary()
-            digest.parse(headers["content-digest"].encode())
-            for k, v in digest.items():
-                if k not in cls._digest_hashers:
-                    raise InvalidSignature(f'Unsupported digest algorithm "{k}"')
-                raw_digest = v.value
-                hasher = cls._digest_hashers[k]
-                expect_digest = hasher(request.body).digest()
-                if raw_digest != expect_digest:
-                    raise InvalidSignature("The content-digest header does not match the request body")
+        verify_results = verifier.verify(request)
+        if len(verify_results) != 1:
+            raise InvalidSignature("Multiple signatures are not supported.")
+        verify_result = verify_results[0]
+        for component_name in require_components:
+            component_key = component_name
+            if not component_key.startswith('"'):
+                component_key = str(http_sfv.List([http_sfv.Item(component_name)]))
+            if component_key not in verify_result.covered_components:
+                raise InvalidSignature(f"A required component, {component_key}, was not covered by the signature.")
+            if component_key == '"content-digest"':
+                if request.body is None:
+                    raise InvalidSignature("Found a content-digest header in a request with no body")
+                digest = http_sfv.Dictionary()
+                digest.parse(verify_result.covered_components[component_key].encode())
+                for k, v in digest.items():
+                    if k not in cls._digest_hashers:
+                        raise InvalidSignature(f'Unsupported digest algorithm "{k}"')
+                    raw_digest = v.value
+                    hasher = cls._digest_hashers[k]
+                    expect_digest = hasher(request.body).digest()
+                    if raw_digest != expect_digest:
+                        raise InvalidSignature("The content-digest header does not match the request body")
         return verify_result

@@ -23,9 +23,16 @@ class TestAdapter(HTTPAdapter):
         self.client_auth = auth
 
     def send(self, request, *args, **kwargs):
-        HTTPSignatureAuth.verify(request,
-                                 signature_algorithm=self.client_auth.signer.signature_algorithm,
-                                 key_resolver=self.client_auth.signer.key_resolver)
+        verify_args = dict(signature_algorithm=self.client_auth.signer.signature_algorithm,
+                           key_resolver=self.client_auth.signer.key_resolver)
+        HTTPSignatureAuth.verify(request, **verify_args)
+        if request.body is not None:
+            request.body = request.body[::-1]
+            try:
+                HTTPSignatureAuth.verify(request, **verify_args)
+                raise Exception("Expected InvalidSignature to be raised")
+            except InvalidSignature:
+                pass
         response = requests.Response()
         response.status_code = requests.codes.ok
         response.url = request.url
