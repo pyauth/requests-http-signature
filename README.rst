@@ -22,7 +22,9 @@ Usage
   preshared_secret = b'monorail_cat'
   url = 'http://example.com/path'
 
-  auth = HTTPSignatureAuth(key=preshared_secret, key_id=preshared_key_id, signature_algorithm=algorithms.HMAC_SHA256)
+  auth = HTTPSignatureAuth(key=preshared_secret,
+                           key_id=preshared_key_id,
+                           signature_algorithm=algorithms.HMAC_SHA256)
   requests.get(url, auth=auth)
 
 By default, only the ``Date`` header and the ``@method``, ``@authority``, and ``@target-uri`` derived component
@@ -44,7 +46,9 @@ incoming requests:
 
   request = requests.Request(...)  # Reconstruct the incoming request using the Requests API
   request = request.prepare()
-  HTTPSignatureAuth.verify(request, signature_algorithm=algorithms.HMAC_SHA256, key_resolver=key_resolver)
+  HTTPSignatureAuth.verify(request,
+                           signature_algorithm=algorithms.HMAC_SHA256,
+                           key_resolver=key_resolver)
 
 .. admonition:: See what is signed
 
@@ -74,7 +78,9 @@ constructor as bytes in the PEM format, or configure the key resolver as follows
 .. code-block:: python
 
   with open('key.pem', 'rb') as fh:
-      auth = HTTPSignatureAuth(algorithm=algorithms.RSA_V1_5_SHA256, key=fh.read(), key_id=preshared_key_id)
+      auth = HTTPSignatureAuth(algorithm=algorithms.RSA_V1_5_SHA256,
+                               key=fh.read(),
+                               key_id=preshared_key_id)
   requests.get(url, auth=auth)
 
   class MyKeyResolver:
@@ -84,7 +90,9 @@ constructor as bytes in the PEM format, or configure the key resolver as follows
       def resolve_private_key(self, key_id: str):
           return private_key_pem_bytes[key_id]
 
-  auth = HTTPSignatureAuth(algorithm=algorithms.RSA_V1_5_SHA256, key=fh.read(), key_resolver=MyKeyResolver())
+  auth = HTTPSignatureAuth(algorithm=algorithms.RSA_V1_5_SHA256,
+                           key=fh.read(),
+                           key_resolver=MyKeyResolver())
   requests.get(url, auth=auth)
 
 Digest algorithms
