@@ -36,6 +36,8 @@ class TestAdapter(HTTPAdapter):
         response = requests.Response()
         response.status_code = requests.codes.ok
         response.url = request.url
+        response.headers["Received-Signature-Input"] = request.headers["Signature-Input"]
+        response.headers["Received-Signature"] = request.headers["Signature"]
         return response
 
 
@@ -49,6 +51,7 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         self.session = requests.Session()
         self.auth = HTTPSignatureAuth(key_id=default_keyid, key=hmac_secret, signature_algorithm=algorithms.HMAC_SHA256)
         self.session.mount("http://", TestAdapter(self.auth))
+        self.session.mount("https://", TestAdapter(self.auth))
 
     def test_basic_statements(self):
         url = 'http://example.com/path?query#fragment'
@@ -62,6 +65,19 @@ class TestRequestsHTTPSignature(unittest.TestCase):
 
     def test_expired_signature(self):
         "TODO"
+
+    def test_b21(self):
+        url = 'https://example.com/foo?param=Value&Pet=dog'
+        self.session.post(
+            url,
+            json={"hello": "world"},
+            headers={
+                "Date": "Tue, 20 Apr 2021 02:07:55 GMT",
+                "Content-Digest": ("sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+"
+                                   "AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:")
+            },
+            auth=self.auth
+        )
 
     @unittest.skip("TODO")
     def test_rsa(self):

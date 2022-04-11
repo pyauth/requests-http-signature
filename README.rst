@@ -85,15 +85,22 @@ constructor as bytes in the PEM format, or configure the key resolver as follows
   auth = HTTPSignatureAuth(algorithm=algorithms.RSA_V1_5_SHA256, key=fh.read(), key_resolver=MyKeyResolver())
   requests.get(url, auth=auth)
 
+Digest algorithms
+~~~~~~~~~~~~~~~~~
+The library supports SHA-512 digests via subclassing::
+  class MySigner(HTTPSignatureAuth):
+      def add_digest(self, request):
+          super().add_digest(request, algorithm="sha-512")
+
 Links
 -----
-* `IETF HTTP Signatures draft <https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-message-signatures>`_
-* `http-message-signatures <https://github.com/pyauth/http-message-signatures>`_ - a dependency of this library that
-  handles much of the implementation
 * `Project home page (GitHub) <https://github.com/pyauth/requests-http-signature>`_
 * `Package documentation <https://pyauth.github.io/requests-http-signature/>`_
 * `Package distribution (PyPI) <https://pypi.python.org/pypi/requests-http-signature>`_
 * `Change log <https://github.com/pyauth/requests-http-signature/blob/master/Changes.rst>`_
+* `http-message-signatures <https://github.com/pyauth/http-message-signatures>`_ - a dependency of this library that
+  handles much of the implementation
+* `IETF HTTP Signatures draft <https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-message-signatures>`_
 
 Bugs
 ~~~~

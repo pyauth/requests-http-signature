@@ -66,10 +66,14 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         the nonce can be controlled by subclassing this class and overloading the ``get_nonce()`` method.
     :param expires_in:
         Use this to set the ``expires`` signature parameter to the time of signing plus the given timedelta.
-    :param component_resolver_class:
-        Use this to subclass ``http_message_signatures.HTTPSignatureComponentResolver`` and customize header and
-        derived component retrieval if needed.
     """
+
+    component_resolver_class: type = HTTPSignatureComponentResolver
+    """
+    A subclass of ``http_message_signatures.HTTPSignatureComponentResolver`` can be used to override this value
+    to customize the retrieval of header and derived component values if needed.
+    """
+
     _digest_hashers = {"sha-256": hashlib.sha256, "sha-512": hashlib.sha512}
 
     def __init__(self, *,
@@ -81,8 +85,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                  label: str = None,
                  include_alg: bool = True,
                  use_nonce: bool = False,
-                 expires_in: datetime.timedelta = None,
-                 component_resolver_class: type = HTTPSignatureComponentResolver):
+                 expires_in: datetime.timedelta = None):
         if key_resolver is None and key is None:
             raise RequestsHttpSignatureException("Either key_resolver or key must be specified.")
         if key_resolver is not None and key is not None:
@@ -96,10 +99,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         self.use_nonce = use_nonce
         self.covered_component_ids = covered_component_ids
         self.expires_in = expires_in
-        handler_args = dict(signature_algorithm=signature_algorithm,
-                            key_resolver=key_resolver,
-                            component_resolver_class=component_resolver_class)
-        self.signer = HTTPMessageSigner(**handler_args)
+        self.signer = HTTPMessageSigner(signature_algorithm=signature_algorithm,
+                                        key_resolver=key_resolver,
+                                        component_resolver_class=self.component_resolver_class)
 
     def add_date(self, request, timestamp):
         if "Date" not in request.headers:
@@ -108,13 +110,14 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     def add_digest(self, request, algorithm="sha-256"):
         if request.body is None and "content-digest" in self.covered_component_ids:
             raise RequestsHttpSignatureException("Could not compute digest header for request without a body")
-        if request.body is not None and "Content-Digest" not in request.headers:
+        if request.body is not None:
             if "content-digest" not in self.covered_component_ids:
                 self.covered_component_ids = list(self.covered_component_ids) + ["content-digest"]
-            hasher = self._digest_hashers[algorithm]
-            digest = hasher(request.body).digest()
-            digest_node = http_sfv.Dictionary({algorithm: digest})
-            request.headers["Content-Digest"] = str(digest_node)
+            if "Content-Digest" not in request.headers:
+                hasher = self._digest_hashers[algorithm]
+                digest = hasher(request.body).digest()
+                digest_node = http_sfv.Dictionary({algorithm: digest})
+                request.headers["Content-Digest"] = str(digest_node)
 
     def get_nonce(self, request):
         if self.use_nonce:
@@ -148,8 +151,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     def verify(cls, request, *,
                require_components: List[str] = ("@method", "@authority", "@target-uri"),
                signature_algorithm: HTTPSignatureAlgorithm,
-               key_resolver: HTTPSignatureKeyResolver,
-               component_resolver_class: type = HTTPSignatureComponentResolver):
+               key_resolver: HTTPSignatureKeyResolver):
         """
         Verify an HTTP message signature.
 
@@ -176,8 +178,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             for requests without a body, and ("@method", "@authority", "@target-uri", "content-digest") for requests
             with a body.
         :param signature_algorithm:
-            The algorithm expected to be used by the signature. Any signature not using the expected algorithm will be
-            rejected. One of ``requests_http_signature.algorithms.HMAC_SHA256``,
+            The algorithm expected to be used by the signature. Any signature not using the expected algorithm will
+            cause an ``InvalidSignature`` exception. Must be one of ``requests_http_signature.algorithms.HMAC_SHA256``,
             ``requests_http_signature.algorithms.ECDSA_P256_SHA256``,
             ``requests_http_signature.algorithms.ED25519``,
             ``requests_http_signature.algorithms.RSA_PSS_SHA512``, or
@@ -188,9 +190,6 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             ``get_private_key(key_id)`` (required only for signing) and ``get_public_key(key_id)`` (required only for
             verifying). Your implementation should ensure that the key id is recognized and return the corresponding
             key material as PEM bytes (or shared secret bytes for HMAC).
-        :param component_resolver_class:
-            Use this to subclass ``http_message_signatures.HTTPSignatureComponentResolver`` and customize header and
-            derived component retrieval if needed.
 
         :returns: *VerifyResult*, a namedtuple with the following attributes:
 
@@ -198,6 +197,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             * ``algorithm``: (same as ``signature_algorithm`` above)
             * ``covered_components``: A mapping of component names to their values, as covered by the signature
             * ``parameters``: A mapping of signature parameters to their values, as covered by the signature
+            * ``body``: The message body for requests that have a body and pass validation of the covered
+              content-digest; ``None`` otherwise.
 
         :raises: ``InvalidSignature`` - raised whenever signature validation fails for any reason.
         """
@@ -207,7 +208,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
 
         verifier = HTTPMessageVerifier(signature_algorithm=signature_algorithm,
                                        key_resolver=key_resolver,
-                                       component_resolver_class=component_resolver_class)
+                                       component_resolver_class=cls.component_resolver_class)
         verify_results = verifier.verify(request)
         if len(verify_results) != 1:
             raise InvalidSignature("Multiple signatures are not supported.")
@@ -223,6 +224,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                     raise InvalidSignature("Found a content-digest header in a request with no body")
                 digest = http_sfv.Dictionary()
                 digest.parse(verify_result.covered_components[component_key].encode())
+                if len(digest) < 1:
+                    raise InvalidSignature("Found a content-digest header with no digests")
                 for k, v in digest.items():
                     if k not in cls._digest_hashers:
                         raise InvalidSignature(f'Unsupported digest algorithm "{k}"')
@@ -231,4 +234,5 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                     expect_digest = hasher(request.body).digest()
                     if raw_digest != expect_digest:
                         raise InvalidSignature("The content-digest header does not match the request body")
+                    verify_result = verify_result._replace(body=request.body)
         return verify_result
