@@ -1,3 +1,8 @@
+Changes for v0.4.0 (2022-04-10)
+===============================
+
+-  Add require_components to verify; expand docs
+
 Changes for v0.3.0 (2022-04-10)
 ===============================
 
