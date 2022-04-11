@@ -33,7 +33,11 @@ requests with bodies (such as POST), the ``Content-Digest`` header is set to the
 format described in the
 `IETF Digest Fields draft RFC <https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-digest-headers>`_ and signed.
 To add other headers to the signature, pass an array of header names in the ``covered_component_ids`` keyword argument.
+See the `API documentation <https://pyauth.github.io/requests-http-signature/#id1>`_ for the full list of options and
+details.
 
+Verifying messages
+~~~~~~~~~~~~~~~~~~
 In addition to signing messages in the client, the class method ``HTTPSignatureAuth.verify()`` can be used to verify
 incoming requests:
 
