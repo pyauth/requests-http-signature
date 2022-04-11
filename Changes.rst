@@ -1,3 +1,8 @@
+Changes for v0.5.0 (2022-04-10)
+===============================
+
+-  Pass through verified body in VerifiedRequest
+
 Changes for v0.4.0 (2022-04-10)
 ===============================
 
