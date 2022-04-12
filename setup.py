@@ -16,7 +16,7 @@ setup(
     },
     setup_requires=['setuptools_scm >= 3.4.3'],
     install_requires=[
-        "http-message-signatures >= 0.2.2",
+        "http-message-signatures >= 0.2.3",
         "http-sfv >= 0.9.3",
         "requests >= 2.27.1"
     ],

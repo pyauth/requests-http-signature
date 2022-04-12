@@ -1,14 +1,15 @@
 #!/usr/bin/env python
 
-import os, sys, unittest, logging, base64
+import os, sys, unittest, logging, base64, io, json
 
+import http_sfv
 import requests
 from requests.adapters import HTTPAdapter
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from requests_http_signature import algorithms, HTTPSignatureAuth  # noqa: E402
-from http_message_signatures import InvalidSignature  # noqa: E402
+from http_message_signatures import HTTPMessageSigner, InvalidSignature  # noqa: E402
 
 logging.basicConfig(level="DEBUG")
 
@@ -34,10 +35,20 @@ class TestAdapter(HTTPAdapter):
             except InvalidSignature:
                 pass
         response = requests.Response()
+        response.request = request
         response.status_code = requests.codes.ok
         response.url = request.url
         response.headers["Received-Signature-Input"] = request.headers["Signature-Input"]
         response.headers["Received-Signature"] = request.headers["Signature"]
+        response.raw = io.BytesIO(json.dumps({}).encode())
+        signer = HTTPMessageSigner(signature_algorithm=self.client_auth.signer.signature_algorithm,
+                                   key_resolver=self.client_auth.signer.key_resolver)
+        hasher = HTTPSignatureAuth._digest_hashers["sha-256"]
+        digest = hasher(response.raw.getvalue()).digest()
+        response.headers["Content-Digest"] = str(http_sfv.Dictionary({"sha-256": digest}))
+        signer.sign(response,
+                    key_id=default_keyid,
+                    covered_component_ids=("@method", "@authority", "content-digest", "@target-uri"))
         return response
 
 
@@ -61,7 +72,21 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             self.session.get(url, auth=self.auth)
         self.auth.signer.key_resolver.resolve_private_key = lambda k: b"abc"
         self.session.get(url, auth=self.auth)
-        self.session.post(url, auth=self.auth, data=b"xyz")
+        res = self.session.post(url, auth=self.auth, data=b"xyz")
+        verify_args = dict(signature_algorithm=algorithms.HMAC_SHA256, key_resolver=self.auth.signer.key_resolver)
+        HTTPSignatureAuth.verify(res, **verify_args)
+        res.headers["Content-Digest"] = res.headers["Content-Digest"][::-1]
+        with self.assertRaises(InvalidSignature):
+            HTTPSignatureAuth.verify(res, **verify_args)
+        del res.headers["Content-Digest"]
+        with self.assertRaises(InvalidSignature):
+            HTTPSignatureAuth.verify(res, **verify_args)
+        res.headers["Signature"] = res.headers["Signature"][::-1]
+        with self.assertRaises(InvalidSignature):
+            HTTPSignatureAuth.verify(res, **verify_args)
+        del res.headers["Signature"]
+        with self.assertRaises(InvalidSignature):
+            HTTPSignatureAuth.verify(res, **verify_args)
 
     def test_expired_signature(self):
         "TODO"

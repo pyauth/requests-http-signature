@@ -36,10 +36,9 @@ To add other headers to the signature, pass an array of header names in the ``co
 See the `API documentation <https://pyauth.github.io/requests-http-signature/#id1>`_ for the full list of options and
 details.
 
-Verifying messages
-~~~~~~~~~~~~~~~~~~
-In addition to signing messages in the client, the class method ``HTTPSignatureAuth.verify()`` can be used to verify
-incoming requests:
+Verifying responses
+~~~~~~~~~~~~~~~~~~~
+The class method ``HTTPSignatureAuth.verify()`` can be used to verify responses received back from the server:
 
 .. code-block:: python
 
@@ -48,11 +47,23 @@ incoming requests:
           assert key_id == 'squirrel'
           return 'monorail_cat'
 
-  request = requests.Request(...)  # Reconstruct the incoming request using the Requests API
-  request = request.prepare()
-  HTTPSignatureAuth.verify(request,
+  response = requests.get(url, auth=auth)
+  HTTPSignatureAuth.verify(response,
                            signature_algorithm=algorithms.HMAC_SHA256,
                            key_resolver=key_resolver)
+
+More generally, you can reconstruct an arbitrary request using the
+`Requests API <https://docs.python-requests.org/en/latest/api/#requests.Request>`_ and pass it to ``verify()``:
+
+.. code-block:: python
+
+  request = requests.Request(...)  # Reconstruct the incoming request using the Requests API
+  prepared_request = request.prepare()  # Generate a PreparedRequest
+  HTTPSignatureAuth.verify(prepared_request, ...)
+
+To verify incoming requests and sign responses in the context of an HTTP server, see the
+`flask-http-signature <https://github.com/pyauth/flask-http-signature>`_ and
+`http-message-signatures <https://github.com/pyauth/http-message-signatures>`_ packages.
 
 .. admonition:: See what is signed
 

@@ -2,7 +2,7 @@ import datetime
 import email.utils
 import hashlib
 import secrets
-from typing import List
+from typing import List, Union
 
 import http_sfv
 import requests
@@ -148,7 +148,13 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         return request
 
     @classmethod
-    def verify(cls, request: requests.PreparedRequest, *,
+    def get_body(cls, message):
+        if isinstance(message, requests.Response):
+            return message.content
+        return message.body
+
+    @classmethod
+    def verify(cls, message: Union[requests.PreparedRequest, requests.Response], *,
                require_components: List[str] = ("@method", "@authority", "@target-uri"),
                signature_algorithm: HTTPSignatureAlgorithm,
                key_resolver: HTTPSignatureKeyResolver):
@@ -166,23 +172,23 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
          You can ensure that the information signed is what you expect to be signed by only trusting the *VerifyResult*
          tuple returned by ``verify()``.
 
-        :param request:
-            The HTTP request to verify. You can reconstruct an incoming request using the
-            `Requests API <https://docs.python-requests.org/en/latest/api/#requests.Request>`_ as follows::
+        :param message:
+            The HTTP response or request to verify. You can either pass a received response, or reconstruct an arbitrary
+            request using the `Requests API <https://docs.python-requests.org/en/latest/api/#requests.Request>`_::
 
               request = requests.Request(...)
-              request = request.prepare()
-              HTTPSignatureAuth.verify(request, ...)
+              prepared_request = request.prepare()
+              HTTPSignatureAuth.verify(prepared_request, ...)
 
         :param require_components:
             A list of lowercased header names or derived component IDs ("@method", "@target-uri", "@authority",
             "@scheme", "@request-target", "@path", "@query", "@query-params", "@status", or "@request-response" as
             specified in the standard) to require to be covered by the signature. If the "content-digest" header field
-            is specified here (recommended for requests that have a body), it will be verified by matching it against
-            the digest hash computed on the body of the request (expected to be bytes).
+            is specified here (recommended for messages that have a body), it will be verified by matching it against
+            the digest hash computed on the body of the message (expected to be bytes).
 
             If this parameter is not specified, ``verify()`` will set it to ("@method", "@authority", "@target-uri")
-            for requests without a body, and ("@method", "@authority", "@target-uri", "content-digest") for requests
+            for messages without a body, and ("@method", "@authority", "@target-uri", "content-digest") for messages
             with a body.
         :param signature_algorithm:
             The algorithm expected to be used by the signature. Any signature not using the expected algorithm will
@@ -204,19 +210,20 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             * ``algorithm``: (same as ``signature_algorithm`` above)
             * ``covered_components``: A mapping of component names to their values, as covered by the signature
             * ``parameters``: A mapping of signature parameters to their values, as covered by the signature
-            * ``body``: The message body for requests that have a body and pass validation of the covered
+            * ``body``: The message body for messages that have a body and pass validation of the covered
               content-digest; ``None`` otherwise.
 
         :raises: ``InvalidSignature`` - raised whenever signature validation fails for any reason.
         """
-        if request.body is not None:
+        body = cls.get_body(message)
+        if body is not None:
             if "content-digest" not in require_components and '"content-digest"' not in require_components:
                 require_components = list(require_components) + ["content-digest"]
 
         verifier = HTTPMessageVerifier(signature_algorithm=signature_algorithm,
                                        key_resolver=key_resolver,
                                        component_resolver_class=cls.component_resolver_class)
-        verify_results = verifier.verify(request)
+        verify_results = verifier.verify(message)
         if len(verify_results) != 1:
             raise InvalidSignature("Multiple signatures are not supported.")
         verify_result = verify_results[0]
@@ -227,8 +234,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             if component_key not in verify_result.covered_components:
                 raise InvalidSignature(f"A required component, {component_key}, was not covered by the signature.")
             if component_key == '"content-digest"':
-                if request.body is None:
-                    raise InvalidSignature("Found a content-digest header in a request with no body")
+                if body is None:
+                    raise InvalidSignature("Found a content-digest header in a message with no body")
                 digest = http_sfv.Dictionary()
                 digest.parse(verify_result.covered_components[component_key].encode())
                 if len(digest) < 1:
@@ -238,8 +245,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                         raise InvalidSignature(f'Unsupported digest algorithm "{k}"')
                     raw_digest = v.value
                     hasher = cls._digest_hashers[k]
-                    expect_digest = hasher(request.body).digest()
+                    expect_digest = hasher(body).digest()
                     if raw_digest != expect_digest:
-                        raise InvalidSignature("The content-digest header does not match the request body")
-                    verify_result = verify_result._replace(body=request.body)
+                        raise InvalidSignature("The content-digest header does not match the message body")
+                    verify_result = verify_result._replace(body=body)
         return verify_result
