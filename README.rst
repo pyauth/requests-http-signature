@@ -33,7 +33,7 @@ requests with bodies (such as POST), the ``Content-Digest`` header is set to the
 format described in the
 `IETF Digest Fields draft RFC <https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-digest-headers>`_ and signed.
 To add other headers to the signature, pass an array of header names in the ``covered_component_ids`` keyword argument.
-See the `API documentation <https://pyauth.github.io/requests-http-signature/#id1>`_ for the full list of options and
+See the `API documentation <https://pyauth.github.io/requests-http-signature/#id3>`_ for the full list of options and
 details.
 
 Verifying responses
@@ -78,7 +78,7 @@ To verify incoming requests and sign responses in the context of an HTTP server,
 
    verify_result = HTTPSignatureAuth.verify(request, ...)
 
-See the `API documentation <https://pyauth.github.io/requests-http-signature/#id1>`_ for full details.
+See the `API documentation <https://pyauth.github.io/requests-http-signature/#id3>`_ for full details.
 
 Asymmetric key algorithms
 ~~~~~~~~~~~~~~~~~~~~~~~~~
