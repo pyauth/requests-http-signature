@@ -209,7 +209,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             * ``label`` (str): The label for the signature
             * ``algorithm``: (same as ``signature_algorithm`` above)
             * ``covered_components``: A mapping of component names to their values, as covered by the signature
-            * ``parameters``: A mapping of signature parameters to their values, as covered by the signature
+            * ``parameters``: A mapping of signature parameters to their values, as covered by the signature, including
+              "alg", "created", "expires", "keyid", and "nonce". To protect against replay attacks, retrieve the "nonce"
+              parameter here and check that it has not been seen before.
             * ``body``: The message body for messages that have a body and pass validation of the covered
               content-digest; ``None`` otherwise.
 
