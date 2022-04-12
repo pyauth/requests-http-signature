@@ -1,3 +1,10 @@
+Changes for v0.6.0 (2022-04-12)
+===============================
+
+-  Support verifying responses
+
+-  Documentation improvements
+
 Changes for v0.5.0 (2022-04-10)
 ===============================
 
