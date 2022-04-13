@@ -42,7 +42,7 @@ The class method ``HTTPSignatureAuth.verify()`` can be used to verify responses 
 
 .. code-block:: python
 
-  class key_resolver:
+  class MyKeyResolver:
       def resolve_public_key(self, key_id):
           assert key_id == 'squirrel'
           return 'monorail_cat'
@@ -50,7 +50,7 @@ The class method ``HTTPSignatureAuth.verify()`` can be used to verify responses 
   response = requests.get(url, auth=auth)
   HTTPSignatureAuth.verify(response,
                            signature_algorithm=algorithms.HMAC_SHA256,
-                           key_resolver=key_resolver)
+                           key_resolver=MyKeyResolver())
 
 More generally, you can reconstruct an arbitrary request using the
 `Requests API <https://docs.python-requests.org/en/latest/api/#requests.Request>`_ and pass it to ``verify()``:
