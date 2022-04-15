@@ -2,7 +2,7 @@ requests-http-signature: A Requests auth module for HTTP Signature
 ==================================================================
 **requests-http-signature** is a `Requests <https://github.com/requests/requests>`_ `authentication plugin
 <http://docs.python-requests.org/en/master/user/authentication/>`_ (``requests.auth.AuthBase`` subclass) implementing
-the `IETF HTTP Message Signatures draft RFC <https://datatracker.ietf.org/doc/draft-ietf-httpbis-message-signatures/>`_.
+the `IETF HTTP Message Signatures draft standard <https://datatracker.ietf.org/doc/draft-ietf-httpbis-message-signatures/>`_.
 
 Installation
 ------------
@@ -31,7 +31,7 @@ By default, only the ``Date`` header and the ``@method``, ``@authority``, and ``
 identifiers are signed for body-less requests such as GET. The ``Date`` header is set if it is absent. In addition,
 the ``Authorization`` header is signed if it is present, and for requests with bodies (such as POST), the
 ``Content-Digest`` header is set to the SHA256 of the request body using the format described in the
-`IETF Digest Fields draft RFC <https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-digest-headers>`_ and signed.
+`IETF Digest Fields draft <https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-digest-headers>`_ and signed.
 To add other headers to the signature, pass an array of header names in the ``covered_component_ids`` keyword argument.
 See the `API documentation <https://pyauth.github.io/requests-http-signature/#id3>`_ for the full list of options and
 details.
