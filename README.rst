@@ -20,7 +20,7 @@ Usage
   
   preshared_key_id = 'squirrel'
   preshared_secret = b'monorail_cat'
-  url = 'http://example.com/path'
+  url = 'https://example.com/path'
 
   auth = HTTPSignatureAuth(key=preshared_secret,
                            key_id=preshared_key_id,
