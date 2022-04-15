@@ -171,7 +171,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                require_components: List[str] = ("@method", "@authority", "@target-uri"),
                signature_algorithm: HTTPSignatureAlgorithm,
                key_resolver: HTTPSignatureKeyResolver,
-               max_age: datetime.timedelta = datetime.timedelta(hours=36)):
+               max_age: datetime.timedelta = datetime.timedelta(days=1)):
         """
         Verify an HTTP message signature.
 
@@ -195,7 +195,6 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
               HTTPSignatureAuth.verify(prepared_request, ...)
 
         :param require_components:
-            A list of lowercased header names or derived component IDs (
             A list of lowercased header names or derived component IDs (``@method``, ``@target-uri``, ``@authority``,
             ``@scheme``, ``@request-target``, ``@path``, ``@query``, ``@query-params``, ``@status``, or
             ``@request-response``, as specified in the standard) to require to be covered by the signature. If the
