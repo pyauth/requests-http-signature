@@ -117,7 +117,7 @@ To generate a Content-Digest header using SHA-512 instead of the default SHA-256
 follows::
 
   class MySigner(HTTPSignatureAuth):
-      signing_content_digest_hasher = "sha-512"
+      signing_content_digest_algorithm = "sha-512"
 
 Links
 -----
