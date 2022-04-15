@@ -1,3 +1,10 @@
+Changes for v0.7.0 (2022-04-14)
+===============================
+
+-  Use max-age, auto-cover Authorization header
+
+-  Documentation improvements
+
 Changes for v0.6.0 (2022-04-12)
 ===============================
 
