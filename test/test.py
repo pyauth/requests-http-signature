@@ -88,8 +88,10 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         with self.assertRaises(InvalidSignature):
             HTTPSignatureAuth.verify(res, **verify_args)
 
-    def test_expired_signature(self):
-        "TODO"
+    def test_auto_cover_authorization_header(self):
+        url = 'http://example.com/path?query#fragment'
+        res = self.session.get(url, auth=self.auth, headers={"Authorization": "Bearer 12345"})
+        self.assertIn('"authorization"', res.headers["Received-Signature-Input"])
 
     def test_b21(self):
         url = 'https://example.com/foo?param=Value&Pet=dog'
