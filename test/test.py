@@ -43,7 +43,7 @@ class TestAdapter(HTTPAdapter):
         response.raw = io.BytesIO(json.dumps({}).encode())
         signer = HTTPMessageSigner(signature_algorithm=self.client_auth.signer.signature_algorithm,
                                    key_resolver=self.client_auth.signer.key_resolver)
-        hasher = HTTPSignatureAuth._digest_hashers["sha-256"]
+        hasher = HTTPSignatureAuth._content_digest_hashers["sha-256"]
         digest = hasher(response.raw.getvalue()).digest()
         response.headers["Content-Digest"] = str(http_sfv.Dictionary({"sha-256": digest}))
         signer.sign(response,

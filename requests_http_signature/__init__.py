@@ -77,7 +77,10 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     to customize the retrieval of header and derived component values if needed.
     """
 
-    _digest_hashers = {"sha-256": hashlib.sha256, "sha-512": hashlib.sha512}
+    _content_digest_hashers = {"sha-256": hashlib.sha256, "sha-512": hashlib.sha512}
+    default_content_digest_hasher = "sha-256"
+    "The hash algorithm to use to generate the Content-Digest header field (either ``sha-256`` or ``sha-512``)."
+
     _auto_cover_header_fields = {"authorization", "content-digest", "date"}
 
     def __init__(self, *,
@@ -111,14 +114,14 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         if "Date" not in request.headers:
             request.headers["Date"] = email.utils.formatdate(timestamp, usegmt=True)
 
-    def add_digest(self, request, algorithm="sha-256"):
+    def add_digest(self, request):
         if request.body is None and "content-digest" in self.covered_component_ids:
             raise RequestsHttpSignatureException("Could not compute digest header for request without a body")
         if request.body is not None:
             if "Content-Digest" not in request.headers:
-                hasher = self._digest_hashers[algorithm]
+                hasher = self._content_digest_hashers[self.default_content_digest_hasher]
                 digest = hasher(request.body).digest()
-                digest_node = http_sfv.Dictionary({algorithm: digest})
+                digest_node = http_sfv.Dictionary({self.default_content_digest_hasher: digest})
                 request.headers["Content-Digest"] = str(digest_node)
 
     def get_nonce(self, request):
@@ -196,11 +199,11 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             A list of lowercased header names or derived component IDs (``@method``, ``@target-uri``, ``@authority``,
             ``@scheme``, ``@request-target``, ``@path``, ``@query``, ``@query-params``, ``@status``, or
             ``@request-response``, as specified in the standard) to require to be covered by the signature. If the
-            "content-digest" header field is specified here (recommended for messages that have a body), it will be
+            ``content-digest`` header field is specified here (recommended for messages that have a body), it will be
             verified by matching it against the digest hash computed on the body of the message (expected to be bytes).
 
-            If this parameter is not specified, ``verify()`` will set it to ("@method", "@authority", "@target-uri")
-            for messages without a body, and ("@method", "@authority", "@target-uri", "content-digest") for messages
+            If this parameter is not specified, ``verify()`` will set it to ``("@method", "@authority", "@target-uri")``
+            for messages without a body, and ``("@method", "@authority", "@target-uri", "content-digest")`` for messages
             with a body.
         :param signature_algorithm:
             The algorithm expected to be used by the signature. Any signature not using the expected algorithm will
@@ -257,10 +260,10 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                 if len(digest) < 1:
                     raise InvalidSignature("Found a content-digest header with no digests")
                 for k, v in digest.items():
-                    if k not in cls._digest_hashers:
-                        raise InvalidSignature(f'Unsupported digest algorithm "{k}"')
+                    if k not in cls._content_digest_hashers:
+                        raise InvalidSignature(f'Unsupported content digest algorithm "{k}"')
                     raw_digest = v.value
-                    hasher = cls._digest_hashers[k]
+                    hasher = cls._content_digest_hashers[k]
                     expect_digest = hasher(body).digest()
                     if raw_digest != expect_digest:
                         raise InvalidSignature("The content-digest header does not match the message body")

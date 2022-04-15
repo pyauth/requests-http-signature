@@ -112,11 +112,11 @@ constructor as bytes in the PEM format, or configure the key resolver as follows
 
 Digest algorithms
 ~~~~~~~~~~~~~~~~~
-If you need to generate a Content-Digest header using SHA-512, you can do so via subclassing::
+To generate a Content-Digest header using SHA-512 instead of the default SHA-256, subclass ``HTTPSignatureAuth`` as
+follows::
 
   class MySigner(HTTPSignatureAuth):
-      def add_digest(self, request):
-          super().add_digest(request, algorithm="sha-512")
+      default_content_digest_hasher = "sha-512"
 
 Links
 -----
