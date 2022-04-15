@@ -168,7 +168,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                require_components: List[str] = ("@method", "@authority", "@target-uri"),
                signature_algorithm: HTTPSignatureAlgorithm,
                key_resolver: HTTPSignatureKeyResolver,
-               max_age: datetime.timedelta = None):
+               max_age: datetime.timedelta = datetime.timedelta(hours=36)):
         """
         Verify an HTTP message signature.
 
