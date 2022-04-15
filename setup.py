@@ -17,7 +17,7 @@ setup(
     install_requires=[
         "http-message-signatures >= 0.4.0",
         "http-sfv >= 0.9.3",
-        "requests >= 2.27.1"
+        "requests >= 2.25.1"
     ],
     extras_require={
         "tests": [
