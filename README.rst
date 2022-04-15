@@ -51,7 +51,6 @@ The class method ``HTTPSignatureAuth.verify()`` can be used to verify responses 
   verify_result = HTTPSignatureAuth.verify(response,
                                            signature_algorithm=algorithms.HMAC_SHA256,
                                            key_resolver=MyKeyResolver())
-  # To avoid substitution attacks, only trust response data referenced by verify_result
 
 More generally, you can reconstruct an arbitrary request using the
 `Requests API <https://docs.python-requests.org/en/latest/api/#requests.Request>`_ and pass it to ``verify()``:
