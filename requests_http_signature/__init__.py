@@ -78,7 +78,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     """
 
     _content_digest_hashers = {"sha-256": hashlib.sha256, "sha-512": hashlib.sha512}
-    default_content_digest_hasher = "sha-256"
+    signing_content_digest_hasher = "sha-256"
     "The hash algorithm to use to generate the Content-Digest header field (either ``sha-256`` or ``sha-512``)."
 
     _auto_cover_header_fields = {"authorization", "content-digest", "date"}
@@ -119,9 +119,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             raise RequestsHttpSignatureException("Could not compute digest header for request without a body")
         if request.body is not None:
             if "Content-Digest" not in request.headers:
-                hasher = self._content_digest_hashers[self.default_content_digest_hasher]
+                hasher = self._content_digest_hashers[self.signing_content_digest_hasher]
                 digest = hasher(request.body).digest()
-                digest_node = http_sfv.Dictionary({self.default_content_digest_hasher: digest})
+                digest_node = http_sfv.Dictionary({self.signing_content_digest_hasher: digest})
                 request.headers["Content-Digest"] = str(digest_node)
 
     def get_nonce(self, request):
