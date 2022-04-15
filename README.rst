@@ -28,9 +28,9 @@ Usage
   requests.get(url, auth=auth)
 
 By default, only the ``Date`` header and the ``@method``, ``@authority``, and ``@target-uri`` derived component
-identifiers are signed for body-less requests such as GET. The ``Date`` header is set if it is absent. In addition, for
-requests with bodies (such as POST), the ``Content-Digest`` header is set to the SHA256 of the request body using the
-format described in the
+identifiers are signed for body-less requests such as GET. The ``Date`` header is set if it is absent. In addition,
+the ``Authorization`` header is signed if it is present, and for requests with bodies (such as POST), the
+``Content-Digest`` header is set to the SHA256 of the request body using the format described in the
 `IETF Digest Fields draft RFC <https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-digest-headers>`_ and signed.
 To add other headers to the signature, pass an array of header names in the ``covered_component_ids`` keyword argument.
 See the `API documentation <https://pyauth.github.io/requests-http-signature/#id3>`_ for the full list of options and
