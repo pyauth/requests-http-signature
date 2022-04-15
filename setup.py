@@ -4,7 +4,6 @@ from setuptools import setup, find_packages
 
 setup(
     name='requests-http-signature',
-    version='0.2.0',
     url='https://github.com/pyauth/requests-http-signature',
     license='Apache Software License',
     author='Andrey Kislyuk',
