@@ -76,7 +76,7 @@ To verify incoming requests and sign responses in the context of an HTTP server,
  In requests-http-signature, you can ensure that the information signed is what you expect to be signed by only trusting
  the data returned by the ``verify()`` method::
 
-   verify_result = HTTPSignatureAuth.verify(request, ...)
+   verify_result = HTTPSignatureAuth.verify(message, ...)
 
 See the `API documentation <https://pyauth.github.io/requests-http-signature/#id3>`_ for full details.
 
