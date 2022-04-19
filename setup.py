@@ -26,6 +26,7 @@ setup(
             "build",
             "wheel",
             "mypy",
+            "types-requests",
         ]
     },
     packages=find_packages(exclude=['test']),
