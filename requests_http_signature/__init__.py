@@ -2,7 +2,7 @@ import datetime
 import email.utils
 import hashlib
 import secrets
-from typing import List, Union
+from typing import Union, Sequence, Type
 
 import http_sfv
 import requests
@@ -10,7 +10,7 @@ import requests
 from requests.exceptions import RequestException
 from http_message_signatures import (algorithms, HTTPSignatureComponentResolver, HTTPSignatureKeyResolver,  # noqa: F401
                                      HTTPMessageSigner, HTTPMessageVerifier, HTTPSignatureAlgorithm, InvalidSignature)
-from http_message_signatures.structures import CaseInsensitiveDict
+from http_message_signatures.structures import CaseInsensitiveDict, VerifyResult
 
 
 class RequestsHttpSignatureException(RequestException):
@@ -84,11 +84,11 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     _auto_cover_header_fields = {"authorization", "content-digest", "date"}
 
     def __init__(self, *,
-                 signature_algorithm: HTTPSignatureAlgorithm,
+                 signature_algorithm: Type[HTTPSignatureAlgorithm],
                  key: bytes = None,
                  key_id: str,
                  key_resolver: HTTPSignatureKeyResolver = None,
-                 covered_component_ids: List[str] = ("@method", "@authority", "@target-uri"),
+                 covered_component_ids: Sequence[str] = ("@method", "@authority", "@target-uri"),
                  label: str = None,
                  include_alg: bool = True,
                  use_nonce: bool = False,
@@ -168,10 +168,10 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
 
     @classmethod
     def verify(cls, message: Union[requests.PreparedRequest, requests.Response], *,
-               require_components: List[str] = ("@method", "@authority", "@target-uri"),
-               signature_algorithm: HTTPSignatureAlgorithm,
+               require_components: Sequence[str] = ("@method", "@authority", "@target-uri"),
+               signature_algorithm: Type[HTTPSignatureAlgorithm],
                key_resolver: HTTPSignatureKeyResolver,
-               max_age: datetime.timedelta = datetime.timedelta(days=1)):
+               max_age: datetime.timedelta = datetime.timedelta(days=1)) -> VerifyResult:
         """
         Verify an HTTP message signature.
 

@@ -2,6 +2,7 @@ SHELL=/bin/bash
 
 lint:
 	flake8
+	mypy requests_http_signature
 
 test: lint
 	python ./test/test.py -v

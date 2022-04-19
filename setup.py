@@ -15,7 +15,7 @@ setup(
     },
     setup_requires=['setuptools_scm >= 3.4.3'],
     install_requires=[
-        "http-message-signatures >= 0.4.0",
+        "http-message-signatures >= 0.4.3",
         "http-sfv >= 0.9.3",
         "requests >= 2.25.1"
     ],
@@ -30,6 +30,9 @@ setup(
     },
     packages=find_packages(exclude=['test']),
     include_package_data=True,
+    package_data={
+        "http_message_signatures": ["py.typed"],
+    },
     platforms=['MacOS X', 'Posix'],
     test_suite='test',
     classifiers=[
