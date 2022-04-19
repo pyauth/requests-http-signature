@@ -1,3 +1,10 @@
+Changes for v0.7.1 (2022-04-19)
+===============================
+
+-  Add typing information
+
+-  Documentation improvements
+
 Changes for v0.7.0 (2022-04-14)
 ===============================
 
