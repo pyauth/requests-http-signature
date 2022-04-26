@@ -84,8 +84,7 @@ Asymmetric key algorithms
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 To sign or verify messages with an asymmetric key algorithm, set the ``signature_algorithm`` keyword argument to
 ``algorithms.ED25519``, ``algorithms.ECDSA_P256_SHA256``, ``algorithms.RSA_V1_5_SHA256``, or
-``algorithms.RSA_PSS_SHA512``. Note that signing with rsa-pss-sha512 is not currently supported due to a limitation of
-the cryptography library.
+``algorithms.RSA_PSS_SHA512``.
 
 For asymmetric key algorithms, you can supply the private key as the ``key`` parameter to the ``HTTPSignatureAuth()``
 constructor as bytes in the PEM format, or configure the key resolver as follows:
