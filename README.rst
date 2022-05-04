@@ -92,7 +92,7 @@ constructor as bytes in the PEM format, or configure the key resolver as follows
 .. code-block:: python
 
   with open('key.pem', 'rb') as fh:
-      auth = HTTPSignatureAuth(algorithm=algorithms.RSA_V1_5_SHA256,
+      auth = HTTPSignatureAuth(signature_algorithm=algorithms.RSA_V1_5_SHA256,
                                key=fh.read(),
                                key_id=preshared_key_id)
   requests.get(url, auth=auth)
@@ -104,7 +104,7 @@ constructor as bytes in the PEM format, or configure the key resolver as follows
       def resolve_private_key(self, key_id: str):
           return private_key_pem_bytes[key_id]
 
-  auth = HTTPSignatureAuth(algorithm=algorithms.RSA_V1_5_SHA256,
+  auth = HTTPSignatureAuth(signature_algorithm=algorithms.RSA_V1_5_SHA256,
                            key=fh.read(),
                            key_resolver=MyKeyResolver())
   requests.get(url, auth=auth)
