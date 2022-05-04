@@ -1,0 +1,384 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  
+  <!-- Licensed under the Apache 2.0 License -->
+  <link rel="stylesheet" type="text/css" href="../_static/fonts/open-sans/stylesheet.css" />
+  <!-- Licensed under the SIL Open Font License -->
+  <link rel="stylesheet" type="text/css" href="../_static/fonts/source-serif-pro/source-serif-pro.css" />
+  <link rel="stylesheet" type="text/css" href="../_static/css/bootstrap.min.css" />
+  <link rel="stylesheet" type="text/css" href="../_static/css/bootstrap-theme.min.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+    <title>requests_http_signature &#8212; requests-http-signature  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/guzzle.css" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
+    <script src="../_static/jquery.js"></script>
+    <script src="../_static/underscore.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+  
+   
+
+  </head><body>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">requests-http-signature  documentation</a> &#187;</li>
+          <li class="nav-item nav-item-1"><a href="index.html" accesskey="U">Module code</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">requests_http_signature</a></li> 
+      </ul>
+    </div>
+    <div class="container-wrapper">
+
+      <div id="mobile-toggle">
+        <a href="#"><span class="glyphicon glyphicon-align-justify" aria-hidden="true"></span></a>
+      </div>
+  <div id="left-column">
+    <div class="sphinxsidebar"><a href="
+    ../index.html" class="text-logo">requests-http-signature</a>
+<div class="sidebar-block">
+  <div class="sidebar-wrapper">
+    <div id="main-search">
+      <form class="form-inline" action="../search.html" method="GET" role="form">
+        <div class="input-group">
+          <input name="q" type="text" class="form-control" placeholder="Search...">
+        </div>
+        <input type="hidden" name="check_keywords" value="yes" />
+        <input type="hidden" name="area" value="default" />
+      </form>
+    </div>
+  </div>
+</div>
+      
+    </div>
+  </div>
+        <div id="right-column">
+          
+          <div role="navigation" aria-label="breadcrumbs navigation">
+            <ol class="breadcrumb">
+              <li><a href="../index.html">Docs</a></li>
+              
+                <li><a href="index.html">Module code</a></li>
+              
+              <li>requests_http_signature</li>
+            </ol>
+          </div>
+          
+          <div class="document clearer body">
+            
+  <h1>Source code for requests_http_signature</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span> <span class="nn">datetime</span>
+<span class="kn">import</span> <span class="nn">email.utils</span>
+<span class="kn">import</span> <span class="nn">hashlib</span>
+<span class="kn">import</span> <span class="nn">secrets</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Union</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">,</span> <span class="n">Type</span>
+
+<span class="kn">import</span> <span class="nn">http_sfv</span>
+<span class="kn">import</span> <span class="nn">requests</span>
+
+<span class="kn">from</span> <span class="nn">requests.exceptions</span> <span class="kn">import</span> <span class="n">RequestException</span>
+<span class="kn">from</span> <span class="nn">http_message_signatures</span> <span class="kn">import</span> <span class="p">(</span><span class="n">algorithms</span><span class="p">,</span> <span class="n">HTTPSignatureComponentResolver</span><span class="p">,</span> <span class="n">HTTPSignatureKeyResolver</span><span class="p">,</span>  <span class="c1"># noqa: F401</span>
+                                     <span class="n">HTTPMessageSigner</span><span class="p">,</span> <span class="n">HTTPMessageVerifier</span><span class="p">,</span> <span class="n">HTTPSignatureAlgorithm</span><span class="p">,</span> <span class="n">InvalidSignature</span><span class="p">)</span>
+<span class="kn">from</span> <span class="nn">http_message_signatures.structures</span> <span class="kn">import</span> <span class="n">CaseInsensitiveDict</span><span class="p">,</span> <span class="n">VerifyResult</span>
+
+
+<div class="viewcode-block" id="RequestsHttpSignatureException"><a class="viewcode-back" href="../index.html#requests_http_signature.RequestsHttpSignatureException">[docs]</a><span class="k">class</span> <span class="nc">RequestsHttpSignatureException</span><span class="p">(</span><span class="n">RequestException</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;An error occurred while constructing the HTTP Signature for your request.&quot;&quot;&quot;</span></div>
+
+
+<span class="k">class</span> <span class="nc">SingleKeyResolver</span><span class="p">(</span><span class="n">HTTPSignatureKeyResolver</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key_id</span><span class="p">,</span> <span class="n">key</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key_id</span> <span class="o">=</span> <span class="n">key_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">key</span> <span class="o">=</span> <span class="n">key</span>
+
+    <span class="k">def</span> <span class="nf">resolve_public_key</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key_id</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="n">key_id</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">key_id</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">key</span>
+
+    <span class="k">def</span> <span class="nf">resolve_private_key</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key_id</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="n">key_id</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">key_id</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">key</span>
+
+
+<div class="viewcode-block" id="HTTPSignatureAuth"><a class="viewcode-back" href="../index.html#requests_http_signature.HTTPSignatureAuth">[docs]</a><span class="k">class</span> <span class="nc">HTTPSignatureAuth</span><span class="p">(</span><span class="n">requests</span><span class="o">.</span><span class="n">auth</span><span class="o">.</span><span class="n">AuthBase</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A `Requests &lt;https://github.com/requests/requests&gt;`_ `authentication plugin</span>
+<span class="sd">    &lt;http://docs.python-requests.org/en/master/user/authentication/&gt;`_ (``requests.auth.AuthBase`` subclass)</span>
+<span class="sd">    implementing the `IETF HTTP Message Signatures draft RFC</span>
+<span class="sd">    &lt;https://datatracker.ietf.org/doc/draft-ietf-httpbis-message-signatures/&gt;`_.</span>
+
+<span class="sd">    :param signature_algorithm:</span>
+<span class="sd">        One of ``requests_http_signature.algorithms.HMAC_SHA256``,</span>
+<span class="sd">        ``requests_http_signature.algorithms.ECDSA_P256_SHA256``,</span>
+<span class="sd">        ``requests_http_signature.algorithms.ED25519``,</span>
+<span class="sd">        ``requests_http_signature.algorithms.RSA_PSS_SHA512``, or</span>
+<span class="sd">        ``requests_http_signature.algorithms.RSA_V1_5_SHA256``.</span>
+<span class="sd">    :param key:</span>
+<span class="sd">        Key material that will be used to sign the request. In the case of HMAC, this should be the raw bytes of the</span>
+<span class="sd">        shared secret; for all other algorithms, this should be the bytes of the PEM-encoded private key material.</span>
+<span class="sd">    :param key_id: The key ID to use in the signature.</span>
+<span class="sd">    :param key_resolver:</span>
+<span class="sd">        Instead of specifying a fixed key, you can instead pass a key resolver, which should be an instance of a</span>
+<span class="sd">        subclass of ``http_message_signatures.HTTPSignatureKeyResolver``. A key resolver should have two methods,</span>
+<span class="sd">        ``get_private_key(key_id)`` (required only for signing) and ``get_public_key(key_id)`` (required only for</span>
+<span class="sd">        verifying). Your implementation should ensure that the key id is recognized and return the corresponding</span>
+<span class="sd">        key material as PEM bytes (or shared secret bytes for HMAC).</span>
+<span class="sd">    :param covered_component_ids:</span>
+<span class="sd">        A list of lowercased header names or derived component IDs (``@method``, ``@target-uri``, ``@authority``,</span>
+<span class="sd">        ``@scheme``, ``@request-target``, ``@path``, ``@query``, ``@query-params``, ``@status``, or</span>
+<span class="sd">        ``@request-response``, as specified in the standard) to sign. By default, ``@method``, ``@authority``,</span>
+<span class="sd">        and ``@target-uri`` are covered, and the ``Authorization``, ``Content-Digest``, and ``Date`` header fields</span>
+<span class="sd">        are always covered if present.</span>
+<span class="sd">    :param label: The label to use to identify the signature.</span>
+<span class="sd">    :param include_alg:</span>
+<span class="sd">        By default, the signature parameters will include the ``alg`` parameter, using it to identify the signature</span>
+<span class="sd">        algorithm. If you wish not to include this parameter, set this to ``False``.</span>
+<span class="sd">    :param use_nonce:</span>
+<span class="sd">        Set this to ``True`` to include a unique message-specific nonce in the signature parameters. The format of</span>
+<span class="sd">        the nonce can be controlled by subclassing this class and overloading the ``get_nonce()`` method.</span>
+<span class="sd">    :param expires_in:</span>
+<span class="sd">        Use this to set the ``expires`` signature parameter to the time of signing plus the given timedelta.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">component_resolver_class</span><span class="p">:</span> <span class="nb">type</span> <span class="o">=</span> <span class="n">HTTPSignatureComponentResolver</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A subclass of ``http_message_signatures.HTTPSignatureComponentResolver`` can be used to override this value</span>
+<span class="sd">    to customize the retrieval of header and derived component values if needed.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">_content_digest_hashers</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;sha-256&quot;</span><span class="p">:</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">,</span> <span class="s2">&quot;sha-512&quot;</span><span class="p">:</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha512</span><span class="p">}</span>
+    <span class="n">signing_content_digest_algorithm</span> <span class="o">=</span> <span class="s2">&quot;sha-256&quot;</span>
+    <span class="s2">&quot;The hash algorithm to use to generate the Content-Digest header field (either ``sha-256`` or ``sha-512``).&quot;</span>
+
+    <span class="n">_auto_cover_header_fields</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;authorization&quot;</span><span class="p">,</span> <span class="s2">&quot;content-digest&quot;</span><span class="p">,</span> <span class="s2">&quot;date&quot;</span><span class="p">}</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span>
+                 <span class="n">signature_algorithm</span><span class="p">:</span> <span class="n">Type</span><span class="p">[</span><span class="n">HTTPSignatureAlgorithm</span><span class="p">],</span>
+                 <span class="n">key</span><span class="p">:</span> <span class="nb">bytes</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                 <span class="n">key_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                 <span class="n">key_resolver</span><span class="p">:</span> <span class="n">HTTPSignatureKeyResolver</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                 <span class="n">covered_component_ids</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;@method&quot;</span><span class="p">,</span> <span class="s2">&quot;@authority&quot;</span><span class="p">,</span> <span class="s2">&quot;@target-uri&quot;</span><span class="p">),</span>
+                 <span class="n">label</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                 <span class="n">include_alg</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+                 <span class="n">use_nonce</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+                 <span class="n">expires_in</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">timedelta</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">key_resolver</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">key</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">RequestsHttpSignatureException</span><span class="p">(</span><span class="s2">&quot;Either key_resolver or key must be specified.&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">key_resolver</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">key</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">RequestsHttpSignatureException</span><span class="p">(</span><span class="s2">&quot;Either key_resolver or key must be specified, not both.&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">key_resolver</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">key_resolver</span> <span class="o">=</span> <span class="n">SingleKeyResolver</span><span class="p">(</span><span class="n">key_id</span><span class="o">=</span><span class="n">key_id</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="n">key</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">key_id</span> <span class="o">=</span> <span class="n">key_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">label</span> <span class="o">=</span> <span class="n">label</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">include_alg</span> <span class="o">=</span> <span class="n">include_alg</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">use_nonce</span> <span class="o">=</span> <span class="n">use_nonce</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">covered_component_ids</span> <span class="o">=</span> <span class="n">covered_component_ids</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">expires_in</span> <span class="o">=</span> <span class="n">expires_in</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">signer</span> <span class="o">=</span> <span class="n">HTTPMessageSigner</span><span class="p">(</span><span class="n">signature_algorithm</span><span class="o">=</span><span class="n">signature_algorithm</span><span class="p">,</span>
+                                        <span class="n">key_resolver</span><span class="o">=</span><span class="n">key_resolver</span><span class="p">,</span>
+                                        <span class="n">component_resolver_class</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">component_resolver_class</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">add_date</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">timestamp</span><span class="p">):</span>
+        <span class="k">if</span> <span class="s2">&quot;Date&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">:</span>
+            <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">[</span><span class="s2">&quot;Date&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">email</span><span class="o">.</span><span class="n">utils</span><span class="o">.</span><span class="n">formatdate</span><span class="p">(</span><span class="n">timestamp</span><span class="p">,</span> <span class="n">usegmt</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">add_digest</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="s2">&quot;content-digest&quot;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">covered_component_ids</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">RequestsHttpSignatureException</span><span class="p">(</span><span class="s2">&quot;Could not compute digest header for request without a body&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">request</span><span class="o">.</span><span class="n">body</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="s2">&quot;Content-Digest&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">:</span>
+                <span class="n">hasher</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_content_digest_hashers</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">signing_content_digest_algorithm</span><span class="p">]</span>
+                <span class="n">digest</span> <span class="o">=</span> <span class="n">hasher</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">body</span><span class="p">)</span><span class="o">.</span><span class="n">digest</span><span class="p">()</span>
+                <span class="n">digest_node</span> <span class="o">=</span> <span class="n">http_sfv</span><span class="o">.</span><span class="n">Dictionary</span><span class="p">({</span><span class="bp">self</span><span class="o">.</span><span class="n">signing_content_digest_algorithm</span><span class="p">:</span> <span class="n">digest</span><span class="p">})</span>
+                <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">[</span><span class="s2">&quot;Content-Digest&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">digest_node</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">get_nonce</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">use_nonce</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">secrets</span><span class="o">.</span><span class="n">token_urlsafe</span><span class="p">(</span><span class="mi">16</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">get_created</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+        <span class="n">created</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_date</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">timestamp</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">created</span><span class="o">.</span><span class="n">timestamp</span><span class="p">()))</span>
+        <span class="k">return</span> <span class="n">created</span>
+
+    <span class="k">def</span> <span class="nf">get_expires</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">created</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">expires_in</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">expires_in</span>
+
+    <span class="k">def</span> <span class="nf">get_covered_component_ids</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+        <span class="n">covered_component_ids</span> <span class="o">=</span> <span class="n">CaseInsensitiveDict</span><span class="p">((</span><span class="n">k</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">covered_component_ids</span><span class="p">)</span>
+        <span class="n">headers</span> <span class="o">=</span> <span class="n">CaseInsensitiveDict</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">header</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_auto_cover_header_fields</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">header</span> <span class="ow">in</span> <span class="n">headers</span><span class="p">:</span>
+                <span class="n">covered_component_ids</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">header</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">covered_component_ids</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_digest</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+        <span class="n">created</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_created</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+        <span class="n">expires</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_expires</span><span class="p">(</span><span class="n">request</span><span class="p">,</span> <span class="n">created</span><span class="o">=</span><span class="n">created</span><span class="p">)</span>
+        <span class="n">covered_component_ids</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_covered_component_ids</span><span class="p">(</span><span class="n">request</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">signer</span><span class="o">.</span><span class="n">sign</span><span class="p">(</span><span class="n">request</span><span class="p">,</span>
+                         <span class="n">key_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">key_id</span><span class="p">,</span>
+                         <span class="n">created</span><span class="o">=</span><span class="n">created</span><span class="p">,</span>
+                         <span class="n">expires</span><span class="o">=</span><span class="n">expires</span><span class="p">,</span>
+                         <span class="n">nonce</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">get_nonce</span><span class="p">(</span><span class="n">request</span><span class="p">),</span>
+                         <span class="n">label</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">label</span><span class="p">,</span>
+                         <span class="n">include_alg</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">include_alg</span><span class="p">,</span>
+                         <span class="n">covered_component_ids</span><span class="o">=</span><span class="n">covered_component_ids</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">request</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">get_body</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">message</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">message</span><span class="p">,</span> <span class="n">requests</span><span class="o">.</span><span class="n">Response</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">message</span><span class="o">.</span><span class="n">content</span>
+        <span class="k">return</span> <span class="n">message</span><span class="o">.</span><span class="n">body</span>
+
+<div class="viewcode-block" id="HTTPSignatureAuth.verify"><a class="viewcode-back" href="../index.html#requests_http_signature.HTTPSignatureAuth.verify">[docs]</a>    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">verify</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">requests</span><span class="o">.</span><span class="n">PreparedRequest</span><span class="p">,</span> <span class="n">requests</span><span class="o">.</span><span class="n">Response</span><span class="p">],</span> <span class="o">*</span><span class="p">,</span>
+               <span class="n">require_components</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;@method&quot;</span><span class="p">,</span> <span class="s2">&quot;@authority&quot;</span><span class="p">,</span> <span class="s2">&quot;@target-uri&quot;</span><span class="p">),</span>
+               <span class="n">signature_algorithm</span><span class="p">:</span> <span class="n">Type</span><span class="p">[</span><span class="n">HTTPSignatureAlgorithm</span><span class="p">],</span>
+               <span class="n">key_resolver</span><span class="p">:</span> <span class="n">HTTPSignatureKeyResolver</span><span class="p">,</span>
+               <span class="n">max_age</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">timedelta</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">timedelta</span><span class="p">(</span><span class="n">days</span><span class="o">=</span><span class="mi">1</span><span class="p">))</span> <span class="o">-&gt;</span> <span class="n">VerifyResult</span><span class="p">:</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Verify an HTTP message signature.</span>
+
+<span class="sd">        .. admonition:: See what is signed</span>
+
+<span class="sd">         It is important to understand and follow the best practice rule of &quot;See what is signed&quot; when verifying HTTP</span>
+<span class="sd">         message signatures. The gist of this rule is: if your application neglects to verify that the information it</span>
+<span class="sd">         trusts is what was actually signed, the attacker can supply a valid signature but point you to malicious data</span>
+<span class="sd">         that wasn&#39;t signed by that signature. Failure to follow this rule can lead to vulnerability against signature</span>
+<span class="sd">         wrapping and substitution attacks.</span>
+
+<span class="sd">         You can ensure that the information signed is what you expect to be signed by only trusting the *VerifyResult*</span>
+<span class="sd">         tuple returned by ``verify()``.</span>
+
+<span class="sd">        :param message:</span>
+<span class="sd">            The HTTP response or request to verify. You can either pass a received response, or reconstruct an arbitrary</span>
+<span class="sd">            request using the `Requests API &lt;https://docs.python-requests.org/en/latest/api/#requests.Request&gt;`_::</span>
+
+<span class="sd">              request = requests.Request(...)</span>
+<span class="sd">              prepared_request = request.prepare()</span>
+<span class="sd">              HTTPSignatureAuth.verify(prepared_request, ...)</span>
+
+<span class="sd">        :param require_components:</span>
+<span class="sd">            A list of lowercased header names or derived component IDs (``@method``, ``@target-uri``, ``@authority``,</span>
+<span class="sd">            ``@scheme``, ``@request-target``, ``@path``, ``@query``, ``@query-params``, ``@status``, or</span>
+<span class="sd">            ``@request-response``, as specified in the standard) to require to be covered by the signature. If the</span>
+<span class="sd">            ``content-digest`` header field is specified here (recommended for messages that have a body), it will be</span>
+<span class="sd">            verified by matching it against the digest hash computed on the body of the message (expected to be bytes).</span>
+
+<span class="sd">            If this parameter is not specified, ``verify()`` will set it to ``(&quot;@method&quot;, &quot;@authority&quot;, &quot;@target-uri&quot;)``</span>
+<span class="sd">            for messages without a body, and ``(&quot;@method&quot;, &quot;@authority&quot;, &quot;@target-uri&quot;, &quot;content-digest&quot;)`` for messages</span>
+<span class="sd">            with a body.</span>
+<span class="sd">        :param signature_algorithm:</span>
+<span class="sd">            The algorithm expected to be used by the signature. Any signature not using the expected algorithm will</span>
+<span class="sd">            cause an ``InvalidSignature`` exception. Must be one of ``requests_http_signature.algorithms.HMAC_SHA256``,</span>
+<span class="sd">            ``requests_http_signature.algorithms.ECDSA_P256_SHA256``,</span>
+<span class="sd">            ``requests_http_signature.algorithms.ED25519``,</span>
+<span class="sd">            ``requests_http_signature.algorithms.RSA_PSS_SHA512``, or</span>
+<span class="sd">            ``requests_http_signature.algorithms.RSA_V1_5_SHA256``.</span>
+<span class="sd">        :param key_resolver:</span>
+<span class="sd">            A key resolver, which should be an instance of a subclass of</span>
+<span class="sd">            ``http_message_signatures.HTTPSignatureKeyResolver``. A key resolver should have two methods,</span>
+<span class="sd">            ``get_private_key(key_id)`` (required only for signing) and ``get_public_key(key_id)`` (required only for</span>
+<span class="sd">            verifying). Your implementation should ensure that the key id is recognized and return the corresponding</span>
+<span class="sd">            key material as PEM bytes (or shared secret bytes for HMAC).</span>
+<span class="sd">        :param max_age:</span>
+<span class="sd">            The maximum age of the signature, defined as the difference between the ``created`` parameter value and now.</span>
+
+<span class="sd">        :returns: *VerifyResult*, a namedtuple with the following attributes:</span>
+
+<span class="sd">            * ``label`` (str): The label for the signature</span>
+<span class="sd">            * ``algorithm``: (same as ``signature_algorithm`` above)</span>
+<span class="sd">            * ``covered_components``: A mapping of component names to their values, as covered by the signature</span>
+<span class="sd">            * ``parameters``: A mapping of signature parameters to their values, as covered by the signature, including</span>
+<span class="sd">              &quot;alg&quot;, &quot;created&quot;, &quot;expires&quot;, &quot;keyid&quot;, and &quot;nonce&quot;. To protect against replay attacks, retrieve the &quot;nonce&quot;</span>
+<span class="sd">              parameter here and check that it has not been seen before.</span>
+<span class="sd">            * ``body``: The message body for messages that have a body and pass validation of the covered</span>
+<span class="sd">              content-digest; ``None`` otherwise.</span>
+
+<span class="sd">        :raises: ``InvalidSignature`` - raised whenever signature validation fails for any reason.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">body</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">get_body</span><span class="p">(</span><span class="n">message</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">body</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="s2">&quot;content-digest&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">require_components</span> <span class="ow">and</span> <span class="s1">&#39;&quot;content-digest&quot;&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">require_components</span><span class="p">:</span>
+                <span class="n">require_components</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">require_components</span><span class="p">)</span> <span class="o">+</span> <span class="p">[</span><span class="s2">&quot;content-digest&quot;</span><span class="p">]</span>
+
+        <span class="n">verifier</span> <span class="o">=</span> <span class="n">HTTPMessageVerifier</span><span class="p">(</span><span class="n">signature_algorithm</span><span class="o">=</span><span class="n">signature_algorithm</span><span class="p">,</span>
+                                       <span class="n">key_resolver</span><span class="o">=</span><span class="n">key_resolver</span><span class="p">,</span>
+                                       <span class="n">component_resolver_class</span><span class="o">=</span><span class="bp">cls</span><span class="o">.</span><span class="n">component_resolver_class</span><span class="p">)</span>
+        <span class="n">verify_results</span> <span class="o">=</span> <span class="n">verifier</span><span class="o">.</span><span class="n">verify</span><span class="p">(</span><span class="n">message</span><span class="p">,</span> <span class="n">max_age</span><span class="o">=</span><span class="n">max_age</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">verify_results</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">InvalidSignature</span><span class="p">(</span><span class="s2">&quot;Multiple signatures are not supported.&quot;</span><span class="p">)</span>
+        <span class="n">verify_result</span> <span class="o">=</span> <span class="n">verify_results</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">component_name</span> <span class="ow">in</span> <span class="n">require_components</span><span class="p">:</span>
+            <span class="n">component_key</span> <span class="o">=</span> <span class="n">component_name</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">component_key</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;&quot;&#39;</span><span class="p">):</span>
+                <span class="n">component_key</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">http_sfv</span><span class="o">.</span><span class="n">List</span><span class="p">([</span><span class="n">http_sfv</span><span class="o">.</span><span class="n">Item</span><span class="p">(</span><span class="n">component_name</span><span class="p">)]))</span>
+            <span class="k">if</span> <span class="n">component_key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">verify_result</span><span class="o">.</span><span class="n">covered_components</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">InvalidSignature</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;A required component, </span><span class="si">{</span><span class="n">component_key</span><span class="si">}</span><span class="s2">, was not covered by the signature.&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">component_key</span> <span class="o">==</span> <span class="s1">&#39;&quot;content-digest&quot;&#39;</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">body</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="n">InvalidSignature</span><span class="p">(</span><span class="s2">&quot;Found a content-digest header in a message with no body&quot;</span><span class="p">)</span>
+                <span class="n">digest</span> <span class="o">=</span> <span class="n">http_sfv</span><span class="o">.</span><span class="n">Dictionary</span><span class="p">()</span>
+                <span class="n">digest</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">verify_result</span><span class="o">.</span><span class="n">covered_components</span><span class="p">[</span><span class="n">component_key</span><span class="p">]</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">digest</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="n">InvalidSignature</span><span class="p">(</span><span class="s2">&quot;Found a content-digest header with no digests&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">digest</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                    <span class="k">if</span> <span class="n">k</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_content_digest_hashers</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">InvalidSignature</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Unsupported content digest algorithm &quot;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s1">&quot;&#39;</span><span class="p">)</span>
+                    <span class="n">raw_digest</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">value</span>
+                    <span class="n">hasher</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_content_digest_hashers</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
+                    <span class="n">expect_digest</span> <span class="o">=</span> <span class="n">hasher</span><span class="p">(</span><span class="n">body</span><span class="p">)</span><span class="o">.</span><span class="n">digest</span><span class="p">()</span>
+                    <span class="k">if</span> <span class="n">raw_digest</span> <span class="o">!=</span> <span class="n">expect_digest</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">InvalidSignature</span><span class="p">(</span><span class="s2">&quot;The content-digest header does not match the message body&quot;</span><span class="p">)</span>
+                    <span class="n">verify_result</span> <span class="o">=</span> <span class="n">verify_result</span><span class="o">.</span><span class="n">_replace</span><span class="p">(</span><span class="n">body</span><span class="o">=</span><span class="n">body</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">verify_result</span></div></div>
+</pre></div>
+
+          </div>
+            
+        </div>
+        <div class="clearfix"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">requests-http-signature  documentation</a> &#187;</li>
+          <li class="nav-item nav-item-1"><a href="index.html" >Module code</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">requests_http_signature</a></li> 
+      </ul>
+    </div>
+<script type="text/javascript">
+  $("#mobile-toggle a").click(function () {
+    $("#left-column").toggle();
+  });
+</script>
+<script type="text/javascript" src="../_static/js/bootstrap.js"></script>
+  <div class="footer">
+    &copy; Copyright Andrey Kislyuk. Created using <a href="http://sphinx.pocoo.org/">Sphinx</a>.
+  </div>
+  </body>
+</html>
