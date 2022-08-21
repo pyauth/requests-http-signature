@@ -2,15 +2,21 @@ import datetime
 import email.utils
 import hashlib
 import secrets
-from typing import Union, Sequence, Type
+from typing import Sequence, Type, Union
 
 import http_sfv
 import requests
-
-from requests.exceptions import RequestException
-from http_message_signatures import (algorithms, HTTPSignatureComponentResolver, HTTPSignatureKeyResolver,  # noqa: F401
-                                     HTTPMessageSigner, HTTPMessageVerifier, HTTPSignatureAlgorithm, InvalidSignature)
+from http_message_signatures import (  # noqa: F401
+    HTTPMessageSigner,
+    HTTPMessageVerifier,
+    HTTPSignatureAlgorithm,
+    HTTPSignatureComponentResolver,
+    HTTPSignatureKeyResolver,
+    InvalidSignature,
+    algorithms,
+)
 from http_message_signatures.structures import CaseInsensitiveDict, VerifyResult
+from requests.exceptions import RequestException
 
 
 class RequestsHttpSignatureException(RequestException):
