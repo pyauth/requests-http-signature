@@ -89,16 +89,19 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
 
     _auto_cover_header_fields = {"authorization", "content-digest", "date"}
 
-    def __init__(self, *,
-                 signature_algorithm: Type[HTTPSignatureAlgorithm],
-                 key: bytes = None,
-                 key_id: str,
-                 key_resolver: HTTPSignatureKeyResolver = None,
-                 covered_component_ids: Sequence[str] = ("@method", "@authority", "@target-uri"),
-                 label: str = None,
-                 include_alg: bool = True,
-                 use_nonce: bool = False,
-                 expires_in: datetime.timedelta = None):
+    def __init__(
+        self,
+        *,
+        signature_algorithm: Type[HTTPSignatureAlgorithm],
+        key: bytes = None,
+        key_id: str,
+        key_resolver: HTTPSignatureKeyResolver = None,
+        covered_component_ids: Sequence[str] = ("@method", "@authority", "@target-uri"),
+        label: str = None,
+        include_alg: bool = True,
+        use_nonce: bool = False,
+        expires_in: datetime.timedelta = None,
+    ):
         if key_resolver is None and key is None:
             raise RequestsHttpSignatureException("Either key_resolver or key must be specified.")
         if key_resolver is not None and key is not None:
@@ -112,9 +115,11 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         self.use_nonce = use_nonce
         self.covered_component_ids = covered_component_ids
         self.expires_in = expires_in
-        self.signer = HTTPMessageSigner(signature_algorithm=signature_algorithm,
-                                        key_resolver=key_resolver,
-                                        component_resolver_class=self.component_resolver_class)
+        self.signer = HTTPMessageSigner(
+            signature_algorithm=signature_algorithm,
+            key_resolver=key_resolver,
+            component_resolver_class=self.component_resolver_class,
+        )
 
     def add_date(self, request, timestamp):
         if "Date" not in request.headers:
@@ -156,14 +161,16 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         created = self.get_created(request)
         expires = self.get_expires(request, created=created)
         covered_component_ids = self.get_covered_component_ids(request)
-        self.signer.sign(request,
-                         key_id=self.key_id,
-                         created=created,
-                         expires=expires,
-                         nonce=self.get_nonce(request),
-                         label=self.label,
-                         include_alg=self.include_alg,
-                         covered_component_ids=covered_component_ids)
+        self.signer.sign(
+            request,
+            key_id=self.key_id,
+            created=created,
+            expires=expires,
+            nonce=self.get_nonce(request),
+            label=self.label,
+            include_alg=self.include_alg,
+            covered_component_ids=covered_component_ids,
+        )
         return request
 
     @classmethod
@@ -173,11 +180,15 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         return message.body
 
     @classmethod
-    def verify(cls, message: Union[requests.PreparedRequest, requests.Response], *,
-               require_components: Sequence[str] = ("@method", "@authority", "@target-uri"),
-               signature_algorithm: Type[HTTPSignatureAlgorithm],
-               key_resolver: HTTPSignatureKeyResolver,
-               max_age: datetime.timedelta = datetime.timedelta(days=1)) -> VerifyResult:
+    def verify(
+        cls,
+        message: Union[requests.PreparedRequest, requests.Response],
+        *,
+        require_components: Sequence[str] = ("@method", "@authority", "@target-uri"),
+        signature_algorithm: Type[HTTPSignatureAlgorithm],
+        key_resolver: HTTPSignatureKeyResolver,
+        max_age: datetime.timedelta = datetime.timedelta(days=1),
+    ) -> VerifyResult:
         """
         Verify an HTTP message signature.
 
@@ -244,9 +255,11 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             if "content-digest" not in require_components and '"content-digest"' not in require_components:
                 require_components = list(require_components) + ["content-digest"]
 
-        verifier = HTTPMessageVerifier(signature_algorithm=signature_algorithm,
-                                       key_resolver=key_resolver,
-                                       component_resolver_class=cls.component_resolver_class)
+        verifier = HTTPMessageVerifier(
+            signature_algorithm=signature_algorithm,
+            key_resolver=key_resolver,
+            component_resolver_class=cls.component_resolver_class,
+        )
         verify_results = verifier.verify(message, max_age=max_age)
         if len(verify_results) != 1:
             raise InvalidSignature("Multiple signatures are not supported.")

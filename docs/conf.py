@@ -1,7 +1,9 @@
-import os, sys
+import os
+import sys
+
 import guzzle_sphinx_theme
 
-sys.path.insert(0, os.path.abspath('..'))
+sys.path.insert(0, os.path.abspath(".."))
 
 project = "requests-http-signature"
 copyright = "Andrey Kislyuk"
@@ -27,6 +29,6 @@ html_sidebars = {
         "logo-text.html",
         # "globaltoc.html",
         "localtoc.html",
-        "searchbox.html"
+        "searchbox.html",
     ]
 }
