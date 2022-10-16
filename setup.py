@@ -28,7 +28,7 @@ setup(
     packages=find_packages(exclude=["test"]),
     include_package_data=True,
     package_data={
-        "http_message_signatures": ["py.typed"],
+        "requests_http_signature": ["py.typed"],
     },
     platforms=["MacOS X", "Posix"],
     test_suite="test",
