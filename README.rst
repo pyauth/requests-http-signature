@@ -105,8 +105,8 @@ constructor as bytes in the PEM format, or configure the key resolver as follows
           return private_key_pem_bytes[key_id]
 
   auth = HTTPSignatureAuth(signature_algorithm=algorithms.RSA_V1_5_SHA256,
-                           key=fh.read(),
-                           key_resolver=MyKeyResolver())
+                           key_resolver=MyKeyResolver(),
+                           key_id="my-key-id")
   requests.get(url, auth=auth)
 
 Digest algorithms
