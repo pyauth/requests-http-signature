@@ -1,0 +1,10 @@
+requests-http-signature is a free open source implementation of the
+IETF HTTP Message Signatures standard, RFC 9421.  This project is
+staffed by volunteers. If you are using requests-http-signature in a
+for-profit project, please contribute to its development and
+maintenance using the "Sponsor" button on the GitHub project page,
+https://github.com/pyauth/requests-http-signature. If you are looking
+for support with commercial applications based on
+requests-http-signature, please donate and contact its developers
+using the issue tracker on the requests-http-signature project page or
+the contact information listed in README.rst.

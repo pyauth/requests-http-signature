@@ -2,7 +2,8 @@ requests-http-signature: A Requests auth module for HTTP Signature
 ==================================================================
 **requests-http-signature** is a `Requests <https://github.com/requests/requests>`_ `authentication plugin
 <http://docs.python-requests.org/en/master/user/authentication/>`_ (``requests.auth.AuthBase`` subclass) implementing
-the `IETF HTTP Message Signatures draft standard <https://datatracker.ietf.org/doc/draft-ietf-httpbis-message-signatures/>`_.
+the
+`IETF RFC 9421 HTTP Message Signatures standard <https://datatracker.ietf.org/doc/rfc9421/>`_.
 
 Installation
 ------------
@@ -117,6 +118,10 @@ follows::
   class MySigner(HTTPSignatureAuth):
       signing_content_digest_algorithm = "sha-512"
 
+Authors
+-------
+* `Andrey Kislyuk <https://kislyuk.com>`
+
 Links
 -----
 * `Project home page (GitHub) <https://github.com/pyauth/requests-http-signature>`_
@@ -125,7 +130,7 @@ Links
 * `Change log <https://github.com/pyauth/requests-http-signature/blob/master/Changes.rst>`_
 * `http-message-signatures <https://github.com/pyauth/http-message-signatures>`_ - a dependency of this library that
   handles much of the implementation
-* `IETF HTTP Signatures draft <https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-message-signatures>`_
+* `IETF RFC 9421, HTTP Message Signatures <https://datatracker.ietf.org/doc/rfc9421/>`_
 
 Bugs
 ~~~~
@@ -133,4 +138,7 @@ Please report bugs, issues, feature requests, etc. on `GitHub <https://github.co
 
 License
 -------
-Licensed under the terms of the `Apache License, Version 2.0 <http://www.apache.org/licenses/LICENSE-2.0>`_.
+Copyright 2017-2024, Andrey Kislyuk and requests-http-signature contributors. Licensed under the terms of the
+`Apache License, Version 2.0 <http://www.apache.org/licenses/LICENSE-2.0>`_. Distribution of attribution information,
+LICENSE and NOTICE files with source copies of this package and derivative works is **REQUIRED** as specified by the
+Apache License.
