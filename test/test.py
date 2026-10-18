@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import base64
+import datetime
 import gzip
 import hashlib
 import io
@@ -17,7 +18,8 @@ from urllib3.response import HTTPResponse
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from http_message_signatures import HTTPMessageSigner, InvalidSignature
+from http_message_signatures import HTTPMessageSigner, HTTPMessageVerifier, InvalidSignature
+from http_message_signatures.exceptions import HTTPMessageSignaturesException
 
 from requests_http_signature import HTTPSignatureAuth, RequestsHttpSignatureException, algorithms
 
@@ -258,6 +260,136 @@ class TestRequestsHTTPSignature(unittest.TestCase):
                 auth=self.auth,
                 headers={"Content-Digest": str(http_sfv.Dictionary({"sha-256": hashlib.sha256(b"stale").digest()}))},
             ).prepare()
+
+    def test_external_signing_prepares_and_applies_without_a_local_key(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        key = Ed25519PrivateKey.generate()
+        auth = HTTPSignatureAuth(
+            key_id="remote",
+            signature_algorithm=algorithms.ED25519,
+            tag="app",
+            use_nonce=True,
+            expires_in=datetime.timedelta(minutes=5),
+        )
+        with self.assertRaisesRegex(RequestsHttpSignatureException, r"prepare\(\)/apply\(\)"):
+            requests.Request("POST", "https://example.com/", data="hello", auth=auth).prepare()
+        request = self.session.prepare_request(requests.Request("POST", "https://example.com/", data="hello"))
+        prepared = auth.prepare(request)
+        self.assertNotIn("Signature", request.headers)
+        self.assertIn(b'"content-digest":', prepared.signature_base)
+        self.assertIn(b'"date":', prepared.signature_base)
+        self.assertIs(auth.apply(request, prepared, key.sign(prepared.signature_base)), request)
+
+        class Resolver:
+            def resolve_public_key(self, key_id):
+                return key.public_key()
+
+        result = HTTPSignatureAuth.verify(
+            request, signature_algorithm=algorithms.ED25519, key_resolver=Resolver(), expect_tag="app"
+        )
+        self.assertEqual(result.body, b"hello")
+        self.assertIsInstance(result.nonce, str)
+        self.assertEqual(result.parameters["expires"] - result.parameters["created"], 300)
+
+    def test_external_signing_rejects_changed_body_or_headers(self):
+        for change in ("body", "header"):
+            with self.subTest(change=change):
+                request = requests.Request("POST", "https://example.com/", data=b"hello").prepare()
+                prepared = self.auth.prepare(request)
+                signature = algorithms.HMAC_SHA256(shared_secret=hmac_secret).sign(prepared.signature_base)
+                if change == "body":
+                    request.body = b"changed"
+                else:
+                    request.headers["Date"] = "different"
+                headers = dict(request.headers)
+                with self.assertRaises((RequestsHttpSignatureException, HTTPMessageSignaturesException)):
+                    self.auth.apply(request, prepared, signature)
+                self.assertEqual(dict(request.headers), headers)
+
+    def test_interleaved_external_signatures_and_append(self):
+        first = requests.Request("POST", "https://example.com/first", data=b"first").prepare()
+        second = requests.Request("POST", "https://example.com/second", data=b"second").prepare()
+        prepared_first = self.auth.prepare(first)
+        prepared_second = self.auth.prepare(second)
+        algorithm = algorithms.HMAC_SHA256(shared_secret=hmac_secret)
+        self.auth.apply(second, prepared_second, algorithm.sign(prepared_second.signature_base))
+        self.auth.apply(first, prepared_first, algorithm.sign(prepared_first.signature_base))
+        self.assertEqual(self.verify(first).body, b"first")
+        self.assertEqual(self.verify(second).body, b"second")
+        self.auth.label, self.auth.tag = "second", "app"
+        prepared = self.auth.prepare(first)
+        self.auth.apply(first, prepared, algorithm.sign(prepared.signature_base), append_if_signature_exists=True)
+        self.assertEqual(self.verify(first, expect_tag="app").label, "second")
+
+    def test_signature_selection(self):
+        request = requests.Request("GET", "https://example.com/").prepare()
+        self.auth.label, self.auth.tag = "first", "app"
+        self.auth(request)
+        self.auth.label, self.auth.tag = "second", "other"
+        self.auth.append_if_signature_exists = True
+        self.auth(request)
+        with self.assertRaises(InvalidSignature):
+            self.verify(request)
+        self.assertEqual(self.verify(request, expect_tag="app", expect_label="first").label, "first")
+        with self.assertRaises(HTTPMessageSignaturesException):
+            self.verify(request, expect_label="first")
+        with self.assertRaises(InvalidSignature):
+            self.verify(request, expect_tag="missing")
+        self.auth.label, self.auth.tag = "third", "app"
+        self.auth(request)
+        with self.assertRaisesRegex(InvalidSignature, "Select a single signature"):
+            self.verify(request, expect_tag="app")
+
+    def test_verifier_age_and_clock_skew_policy(self):
+        request = requests.Request("GET", "https://example.com/").prepare()
+        self.auth.signer.sign(
+            request, key_id=default_keyid, created=datetime.datetime.now() - datetime.timedelta(days=2)
+        )
+        with self.assertRaises(InvalidSignature):
+            self.verify(request)
+        self.verify(request, max_age=None)
+
+        class TolerantVerifier(HTTPMessageVerifier):
+            max_clock_skew = datetime.timedelta(minutes=1)
+
+        class TolerantAuth(HTTPSignatureAuth):
+            verifier_class = TolerantVerifier
+
+        self.auth.signer.sign(
+            request, key_id=default_keyid, created=datetime.datetime.now() + datetime.timedelta(seconds=30)
+        )
+        with self.assertRaises(InvalidSignature):
+            self.verify(request)
+        TolerantAuth.verify(
+            request, signature_algorithm=algorithms.HMAC_SHA256, key_resolver=self.auth.signer.key_resolver
+        )
+
+    def test_optional_creation_timestamp(self):
+        request = requests.Request("GET", "https://example.com/").prepare()
+        params = '("@method");keyid="my_key_id";alg="hmac-sha256"'
+        base = f'"@method": GET\n"@signature-params": {params}'.encode()
+        request.headers["Signature-Input"] = "sig=" + params
+        request.headers["Signature"] = str(
+            http_sfv.Dictionary({"sig": algorithms.HMAC_SHA256(shared_secret=hmac_secret).sign(base)})
+        )
+        with self.assertRaises(InvalidSignature):
+            self.verify(request, require_components=("@method",), max_age=None)
+
+        class OptionalCreatedVerifier(HTTPMessageVerifier):
+            require_created = False
+
+        class OptionalCreatedAuth(HTTPSignatureAuth):
+            verifier_class = OptionalCreatedVerifier
+
+        result = OptionalCreatedAuth.verify(
+            request,
+            require_components=("@method",),
+            max_age=None,
+            signature_algorithm=algorithms.HMAC_SHA256,
+            key_resolver=self.auth.signer.key_resolver,
+        )
+        self.assertEqual(result.label, "sig")
 
     def test_b21(self):
         url = "https://example.com/foo?param=Value&Pet=dog"
