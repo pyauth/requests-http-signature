@@ -3,13 +3,13 @@ name = "requests-http-signature"
 description = "A Requests auth module for HTTP Message Signatures"
 readme = "README.rst"
 requires-python = ">=3.10"
-license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
-authors = [{ name = "Andrey Kislyuk", email = "kislyuk@gmail.com" }]
-maintainers = [{ name = "Andrey Kislyuk", email = "kislyuk@gmail.com" }]
+license = {text = "Apache Software License"}
+authors = [{ name = "Andrey Kislyuk"}, {email = "kislyuk@gmail.com" }]
+maintainers = [{ name = "Andrey Kislyuk"}, {email = "kislyuk@gmail.com" }]
 dynamic = ["version"]
 classifiers = [
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: MacOS :: MacOS X",
     "Operating System :: POSIX",
     "Programming Language :: Python",
@@ -22,18 +22,24 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "http-message-signatures >= 2.0.1",
-    "http-sfv >= 0.9.9",
+    "http-message-signatures >= 0.4.3",
+    "http-sfv >= 0.9.3",
     "requests >= 2.25.1",
 ]
 
 [project.urls]
 Homepage = "https://github.com/pyauth/requests-http-signature"
-Documentation = "https://pyauth.github.io/requests-http-signature/"
 
 [project.optional-dependencies]
-tests = ["coverage", "build", "mypy", "types-requests", "ruff"]
-docs = ["sphinx", "furo"]
+tests = [
+    "flake8",
+    "coverage",
+    "build",
+    "wheel",
+    "mypy",
+    "types-requests",
+    "ruff",
+]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
@@ -42,11 +48,11 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 source = "vcs"
 
+[tool.isort]
+profile = "black"
+
 [tool.ruff]
 line-length = 120
 
-[tool.ruff.lint]
+[lint]
 unfixable = ["F401"]
-
-[tool.mypy]
-check_untyped_defs = true

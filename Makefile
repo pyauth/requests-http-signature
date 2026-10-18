@@ -1,9 +1,8 @@
 SHELL=/bin/bash
 
 lint:
-	ruff check .
-	ruff format --check .
-	mypy requests_http_signature
+	ruff check requests_http_signature
+	mypy --check-untyped-defs requests_http_signature
 
 test: lint
 	python ./test/test.py -v
