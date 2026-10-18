@@ -14,10 +14,9 @@ from requests.adapters import HTTPAdapter
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from http_message_signatures import HTTPMessageSigner  # noqa: E402
-from http_message_signatures import InvalidSignature  # noqa: E402
+from http_message_signatures import HTTPMessageSigner, InvalidSignature
 
-from requests_http_signature import HTTPSignatureAuth, algorithms  # noqa: E402
+from requests_http_signature import HTTPSignatureAuth, algorithms
 
 logging.basicConfig(level="DEBUG")
 
@@ -32,16 +31,16 @@ class TestAdapter(HTTPAdapter):
         self.client_auth = auth
 
     def send(self, request, *args, **kwargs):
-        verify_args = dict(
-            signature_algorithm=self.client_auth.signer.signature_algorithm,
-            key_resolver=self.client_auth.signer.key_resolver,
-        )
+        verify_args = {
+            "signature_algorithm": self.client_auth.signer.signature_algorithm,
+            "key_resolver": self.client_auth.signer.key_resolver,
+        }
         HTTPSignatureAuth.verify(request, **verify_args)
         if request.body is not None:
             request.body = request.body[::-1]
             try:
                 HTTPSignatureAuth.verify(request, **verify_args)
-                raise Exception("Expected InvalidSignature to be raised")
+                raise AssertionError("Expected InvalidSignature to be raised")
             except InvalidSignature:
                 pass
         response = requests.Response()
@@ -87,7 +86,7 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         self.auth.signer.key_resolver.resolve_private_key = lambda k: b"abc"
         self.session.get(url, auth=self.auth)
         res = self.session.post(url, auth=self.auth, data=b"xyz")
-        verify_args = dict(signature_algorithm=algorithms.HMAC_SHA256, key_resolver=self.auth.signer.key_resolver)
+        verify_args = {"signature_algorithm": algorithms.HMAC_SHA256, "key_resolver": self.auth.signer.key_resolver}
         HTTPSignatureAuth.verify(res, **verify_args)
         res.headers["Content-Digest"] = res.headers["Content-Digest"][::-1]
         with self.assertRaises(InvalidSignature):
@@ -115,8 +114,7 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             headers={
                 "Date": "Tue, 20 Apr 2021 02:07:55 GMT",
                 "Content-Digest": (
-                    "sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+"
-                    "AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:"
+                    "sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:"
                 ),
             },
             auth=self.auth,
@@ -139,7 +137,7 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         )
         url = "http://example.com/path?query#fragment"
         auth = HTTPSignatureAuth(algorithm="rsa-sha256", key=private_key_pem, key_id="sekret", passphrase=passphrase)
-        self.session.get(url, auth=auth, headers=dict(pubkey=base64.b64encode(public_key_pem)))
+        self.session.get(url, auth=auth, headers={"pubkey": base64.b64encode(public_key_pem)})
 
 
 if __name__ == "__main__":
