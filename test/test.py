@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import unittest
+from urllib.parse import urljoin, urlsplit
 
 import http_sf.compat as http_sfv
 import requests
@@ -163,6 +164,13 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             self.auth(request)
         with self.assertRaises(InvalidSignature):
             self.verify(request)
+
+    def test_header_matching_preserves_case_insensitivity(self):
+        request = requests.Request("POST", "https://example.com/", data=b"hello", auth=self.auth).prepare()
+        request.headers = {name.lower(): value for name, value in request.headers.items()}
+        self.assertEqual(self.verify(request).body, b"hello")
+        self.auth(request)
+        self.assertEqual(self.verify(request).body, b"hello")
 
     def test_text_form_json_and_multipart_bodies(self):
         cases = [
@@ -390,6 +398,44 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             key_resolver=self.auth.signer.key_resolver,
         )
         self.assertEqual(result.label, "sig")
+
+    def test_explicit_redirect_workflow_signs_each_destination(self):
+        verify = self.verify
+
+        class RedirectAdapter(HTTPAdapter):
+            def __init__(self, destination):
+                super().__init__()
+                self.destination = destination
+                self.requests = []
+
+            def send(self, request, **kwargs):
+                verify(request)
+                self.requests.append(request)
+                response = requests.Response()
+                response.request = request
+                response.url = request.url
+                response._content = b""
+                response.status_code = 302 if len(self.requests) == 1 else 200
+                if response.status_code == 302:
+                    response.headers["Location"] = self.destination
+                return response
+
+        for location in ("/second", "https://other.example/second"):
+            with self.subTest(location=location):
+                adapter = RedirectAdapter(location)
+                self.session.mount("https://", adapter)
+                url = "https://example.com/first"
+                response = self.session.get(url, auth=self.auth, allow_redirects=False)
+                self.assertEqual(len(adapter.requests), 1)
+                destination = urljoin(response.url, response.headers["Location"])
+                origin, target = urlsplit(url), urlsplit(destination)
+                response.close()
+                if (origin.scheme, origin.netloc) != (target.scheme, target.netloc):
+                    continue
+                response = self.session.get(destination, auth=self.auth, allow_redirects=False)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(len(adapter.requests), 2)
+                self.assertNotEqual(adapter.requests[0].headers["Signature"], adapter.requests[1].headers["Signature"])
 
     def test_b21(self):
         url = "https://example.com/foo?param=Value&Pet=dog"
