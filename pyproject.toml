@@ -32,7 +32,6 @@ Homepage = "https://github.com/pyauth/requests-http-signature"
 
 [project.optional-dependencies]
 tests = [
-    "flake8",
     "coverage",
     "build",
     "wheel",
