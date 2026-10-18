@@ -122,11 +122,6 @@ Authors
 -------
 * `Andrey Kislyuk <https://kislyuk.com>`
 
-Development and releases
-------------------------
-See `CONTRIBUTING.rst <https://github.com/pyauth/requests-http-signature/blob/develop/CONTRIBUTING.rst>`_ for development
-commands, versioning, and publishing setup.
-
 Links
 -----
 * `Project home page (GitHub) <https://github.com/pyauth/requests-http-signature>`_
