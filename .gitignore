@@ -10,14 +10,10 @@ __pycache__/
 /build/
 /dist/
 /.eggs/
-/.venv/
-/.mypy_cache/
-/.ruff_cache/
 /*/version.py
 
 # Sphinx documentation
 /docs/_build/
-/docs/html/
 
 # IDE project files
 /.pydevproject
