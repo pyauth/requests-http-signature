@@ -23,8 +23,8 @@ classifiers = [
 ]
 dependencies = [
     "http-message-signatures >= 0.4.3",
-    "http-sfv >= 0.9.3",
-    "requests >= 2.25.1",
+    "http-sf >= 1.4.0",
+    "requests >= 2.34.2",
 ]
 
 [project.urls]
@@ -36,7 +36,6 @@ tests = [
     "build",
     "wheel",
     "mypy",
-    "types-requests",
     "ruff",
 ]
 
