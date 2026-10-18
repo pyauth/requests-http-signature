@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "http-message-signatures >= 0.4.3",
+    "http-message-signatures @ git+https://github.com/pyauth/http-message-signatures@b1f36210030a04ba25d73ddb1c38912dc5ef83b0",
     "http-sf >= 1.4.0",
     "requests >= 2.34.2",
 ]
@@ -45,6 +45,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.isort]
 profile = "black"
