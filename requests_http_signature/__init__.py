@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import secrets
 from collections.abc import Sequence
-from typing import ClassVar
+from typing import ClassVar, cast
 
 import http_sf
 import requests
@@ -17,8 +17,8 @@ from http_message_signatures import (
 )
 from http_message_signatures import InvalidSignature as InvalidSignature
 from http_message_signatures import PreparedSignature as PreparedSignature
+from http_message_signatures import VerifyResult as VerifyResult
 from http_message_signatures import algorithms as algorithms
-from http_message_signatures.structures import VerifyResult
 from http_sf.compat import Dictionary, Item
 from requests.exceptions import RequestException
 
@@ -28,15 +28,15 @@ class RequestsHttpSignatureException(RequestException):
 
 
 class SingleKeyResolver(HTTPSignatureKeyResolver):
-    def __init__(self, key_id, key):
+    def __init__(self, key_id: str, key: bytes) -> None:
         self.key_id = key_id
         self.key = key
 
-    def resolve_public_key(self, key_id):
+    def resolve_public_key(self, key_id: str) -> bytes:
         assert key_id == self.key_id
         return self.key
 
-    def resolve_private_key(self, key_id):
+    def resolve_private_key(self, key_id: str) -> bytes:
         assert key_id == self.key_id
         return self.key
 
@@ -45,8 +45,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     """
     A `Requests <https://github.com/requests/requests>`_ `authentication plugin
     <http://docs.python-requests.org/en/master/user/authentication/>`_ (``requests.auth.AuthBase`` subclass)
-    implementing the `IETF HTTP Message Signatures draft RFC
-    <https://datatracker.ietf.org/doc/draft-ietf-httpbis-message-signatures/>`_.
+    implementing `RFC 9421, HTTP Message Signatures <https://www.rfc-editor.org/rfc/rfc9421.html>`_.
 
     :param signature_algorithm:
         One of ``requests_http_signature.algorithms.HMAC_SHA256``,
@@ -61,16 +60,20 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     :param key_resolver:
         Instead of specifying a fixed key, you can instead pass a key resolver, which should be an instance of a
         subclass of ``http_message_signatures.HTTPSignatureKeyResolver``. A key resolver should have two methods,
-        ``get_private_key(key_id)`` (required only for signing) and ``get_public_key(key_id)`` (required only for
+        ``resolve_private_key(key_id)`` (required only for signing) and ``resolve_public_key(key_id)`` (required only for
         verifying). Your implementation should ensure that the key id is recognized and return the corresponding
-        key material as PEM bytes (or shared secret bytes for HMAC).
+        key material as PEM bytes, cryptography key objects, or shared secret bytes for HMAC.
+        Omit both ``key`` and ``key_resolver`` when using ``prepare()`` and ``apply()`` with an external signer.
     :param covered_component_ids:
-        A list of lowercased header names or derived component IDs (``@method``, ``@target-uri``, ``@authority``,
-        ``@scheme``, ``@request-target``, ``@path``, ``@query``, ``@query-params``, ``@status``, or
-        ``@request-response``, as specified in the standard) to sign. By default, ``@method``, ``@authority``,
-        and ``@target-uri`` are covered, and the ``Authorization``, ``Content-Digest``, and ``Date`` header fields
-        are always covered if present.
-    :param label: The label to use to identify the signature.
+        Lowercase header names or serialized RFC 9421 component identifiers. Request derived components include
+        ``@method``, ``@target-uri``, ``@authority``, ``@scheme``, ``@request-target``, ``@path``, ``@query``, and
+        ``'"@query-param";name="Pet"'``. Parameter values are case-sensitive; their order does not affect identity.
+        Duplicate component identifiers are rejected. Defaults to ``@method``, ``@authority``, and ``@target-uri``.
+        ``Authorization``, ``Content-Digest``, and ``Date`` are also covered when present. Explicit digest-member
+        coverage, such as ``'"content-digest";key="sha-256"'``, replaces automatic whole-field digest coverage.
+    :param label: The signature dictionary label, which is not signed.
+    :param tag: A signed application tag, usable with ``verify(expect_tag=...)``.
+    :param append_if_signature_exists: Append a distinct signature label instead of replacing existing signatures.
     :param include_alg:
         By default, the signature parameters will include the ``alg`` parameter, using it to identify the signature
         algorithm. If you wish not to include this parameter, set this to ``False``.
@@ -81,7 +84,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         Use this to set the ``expires`` signature parameter to the time of signing plus the given timedelta.
     """
 
-    component_resolver_class: type = HTTPSignatureComponentResolver
+    component_resolver_class: type[HTTPSignatureComponentResolver] = HTTPSignatureComponentResolver
     """
     A subclass of ``http_message_signatures.HTTPSignatureComponentResolver`` can be used to override this value
     to customize the retrieval of header and derived component values if needed.
@@ -97,13 +100,20 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     _auto_cover_header_fields: ClassVar = {"authorization", "content-digest", "date"}
 
     @staticmethod
-    def _component_key(component_id: str) -> str:
+    def _component_node(component_id: str) -> Item:
+        if not isinstance(component_id, str):
+            raise RequestsHttpSignatureException("Component identifiers must be strings")
         node = Item()
         node.parse((component_id if component_id.startswith('"') else http_sf.ser(component_id)).encode())
         if not isinstance(node.value, str) or node.value != node.value.lower():
             raise RequestsHttpSignatureException("Component names must be lowercase Structured Field strings")
+        return node
+
+    @classmethod
+    def _component_key(cls, component_id: str) -> str:
+        node = cls._component_node(component_id)
         # RFC 9421 section 2: compare parameters without changing their wire order.
-        return http_sf.ser((node.value, dict(sorted(node.params.items()))))
+        return http_sf.ser((cast(str, node.value), dict(sorted(node.params.items()))))
 
     @classmethod
     def _component_map(cls, component_ids: Sequence[str]) -> dict[str, str]:
@@ -159,11 +169,11 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             component_resolver_class=self.component_resolver_class,
         )
 
-    def add_date(self, request, timestamp):
+    def add_date(self, request: requests.PreparedRequest, timestamp: int) -> None:
         if "Date" not in request.headers:
             request.headers["Date"] = email.utils.formatdate(timestamp, usegmt=True)
 
-    def add_digest(self, request):
+    def add_digest(self, request: requests.PreparedRequest) -> None:
         if isinstance(request.body, str):
             request.body = request.body.encode("utf-8")
         elif isinstance(request.body, (bytearray, memoryview)):
@@ -186,10 +196,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                 Dictionary({self.signing_content_digest_algorithm: hasher(body).digest()})
             )
 
-    @staticmethod
-    def _is_body_digest(component_id: str) -> bool:
-        node = Item()
-        node.parse((component_id if component_id.startswith('"') else http_sf.ser(component_id)).encode())
+    @classmethod
+    def _is_body_digest(cls, component_id: str) -> bool:
+        node = cls._component_node(component_id)
         return node.value == "content-digest" and "req" not in node.params
 
     @classmethod
@@ -218,20 +227,22 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             if not hmac.compare_digest(member[0], expected):
                 raise InvalidSignature("The content-digest header does not match the message body")
 
-    def get_nonce(self, request):
+    def get_nonce(self, request: requests.PreparedRequest) -> str | None:
         if self.use_nonce:
             return secrets.token_urlsafe(16)
+        return None
 
-    def get_created(self, request):
+    def get_created(self, request: requests.PreparedRequest) -> datetime.datetime:
         created = datetime.datetime.now()
         self.add_date(request, timestamp=int(created.timestamp()))
         return created
 
-    def get_expires(self, request, created):
+    def get_expires(self, request: requests.PreparedRequest, created: datetime.datetime) -> datetime.datetime | None:
         if self.expires_in is not None:
             return created + self.expires_in
+        return None
 
-    def get_covered_component_ids(self, request):
+    def get_covered_component_ids(self, request: requests.PreparedRequest) -> list[str]:
         covered_component_ids = self._component_map(self.covered_component_ids)
         self._validate_header_names(request)
         headers = {name.lower() for name in request.headers}
@@ -250,6 +261,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         """
         self._component_map(self.covered_component_ids)
         self._validate_header_names(request)
+        request.headers = requests.structures.CaseInsensitiveDict(request.headers)
         self.add_digest(request)
         created = self.get_created(request)
         expires = self.get_expires(request, created=created)
@@ -281,12 +293,14 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         unchanged. This does not verify the external signature or refresh its age.
         """
         self._validate_header_names(request)
-        if request.body is None or isinstance(request.body, (str, bytes, bytearray, memoryview)):
-            if "Content-Digest" in request.headers:
-                try:
-                    self._verify_digest(request.headers["Content-Digest"], self.get_body(request) or b"")
-                except InvalidSignature as e:
-                    raise RequestsHttpSignatureException(str(e)) from e
+        headers = requests.structures.CaseInsensitiveDict(request.headers)
+        if "Content-Digest" in headers and (
+            request.body is None or isinstance(request.body, (str, bytes, bytearray, memoryview))
+        ):
+            try:
+                self._verify_digest(headers["Content-Digest"], self.get_body(request) or b"")
+            except InvalidSignature as e:
+                raise RequestsHttpSignatureException(str(e)) from e
         self.signer.apply(
             request,
             prepared,
@@ -308,7 +322,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         return self.apply(request, prepared, signer.sign(prepared.signature_base))
 
     @classmethod
-    def get_body(cls, message):
+    def get_body(cls, message: requests.PreparedRequest | requests.Response) -> bytes | None:
         if isinstance(message, requests.Response):
             if (
                 message.status_code in (204, 304)
@@ -316,7 +330,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                 or (message.request is not None and message.request.method == "HEAD")
             ):
                 return b""
-            if message.headers.get("Content-Encoding", "identity").lower() != "identity":
+            headers = requests.structures.CaseInsensitiveDict(message.headers)
+            if headers.get("Content-Encoding", "identity").lower() != "identity":
                 raise InvalidSignature(
                     "Encoded responses require body= with encoded bytes: request stream=True, "
                     "then read response.raw.read(decode_content=False) before accessing response.content"
@@ -366,15 +381,16 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
               HTTPSignatureAuth.verify(prepared_request, ...)
 
         :param require_components:
-            A list of lowercased header names or derived component IDs (``@method``, ``@target-uri``, ``@authority``,
-            ``@scheme``, ``@request-target``, ``@path``, ``@query``, ``@query-params``, ``@status``, or
-            ``@request-response``, as specified in the standard) to require to be covered by the signature. If the
-            ``content-digest`` header field is specified here (recommended for messages that have a body), it will be
-            verified by matching it against the digest hash computed on the body of the message (expected to be bytes).
+            Lowercase header names or serialized component identifiers whose coverage is required. Parameter order
+            is ignored for comparison, but parameter values retain their case and types. Duplicate identifiers fail.
+            The request default is ``("@method", "@authority", "@target-uri")``. The response default is
+            ``("@status", '"@method";req', '"@authority";req', '"@target-uri";req')``, binding the response to its request.
+            Supply a different profile explicitly if your peer signs other components.
 
-            If this parameter is not specified, ``verify()`` will set it to ``("@method", "@authority", "@target-uri")``
-            for messages without a body, and ``("@method", "@authority", "@target-uri", "content-digest")`` for messages
-            with a body.
+            Nonempty content, or a present Content-Digest field, additionally requires a covered content digest.
+            A selected digest dictionary member is sufficient. Empty messages do not require an absent digest;
+            any present digest is still verified, including the digest of empty content. Request components with
+            ``;req`` do not satisfy coverage of the response body. Validation returns the bytes in ``result.body``.
         :param signature_algorithm:
             The algorithm expected to be used by the signature. Any signature not using the expected algorithm will
             cause an ``InvalidSignature`` exception. Must be one of ``requests_http_signature.algorithms.HMAC_SHA256``,
@@ -385,11 +401,20 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         :param key_resolver:
             A key resolver, which should be an instance of a subclass of
             ``http_message_signatures.HTTPSignatureKeyResolver``. A key resolver should have two methods,
-            ``get_private_key(key_id)`` (required only for signing) and ``get_public_key(key_id)`` (required only for
+            ``resolve_private_key(key_id)`` (required only for signing) and ``resolve_public_key(key_id)`` (required only for
             verifying). Your implementation should ensure that the key id is recognized and return the corresponding
             key material as PEM bytes (or shared secret bytes for HMAC).
         :param max_age:
-            The maximum age of the signature, defined as the difference between the ``created`` parameter value and now.
+            Maximum age since ``created``; ``None`` disables this limit, but expiration is still checked.
+            Customize ``verifier_class`` to change its ``require_created`` and ``max_clock_skew`` policies.
+        :param expect_tag: Select a signed application tag. Selection must leave one verified signature.
+        :param expect_label: Further select the dictionary label; requires ``expect_tag`` under the default policy.
+        :param body:
+            Transmitted content bytes before content decoding. Required for compressed responses and streaming
+            request bodies. For a compressed response, send with ``stream=True`` and capture
+            ``response.raw.read(decode_content=False)`` before accessing ``response.content`` or ``iter_content()``.
+            This method does not check that caller-supplied bytes came from the message; keep that association intact.
+            Without this argument, unencoded response content is read into memory and buffered request bodies are used.
 
         :returns: *VerifyResult*, a namedtuple with the following attributes:
 
@@ -399,10 +424,11 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             * ``parameters``: A mapping of signature parameters to their values, as covered by the signature, including
               "alg", "created", "expires", "keyid", and "nonce". To protect against replay attacks, retrieve the "nonce"
               parameter here and check that it has not been seen before.
-            * ``body``: The message body for messages that have a body and pass validation of the covered
-              content-digest; ``None`` otherwise.
+            * ``nonce``: The signed nonce, or ``None``. Applications must enforce replay detection.
+            * ``body``: Content bytes before decoding, after validating their covered digest; ``None`` otherwise.
 
-        :raises: ``InvalidSignature`` - raised whenever signature validation fails for any reason.
+        :raises InvalidSignature: Signature, required coverage, or body-digest validation fails.
+        :raises HTTPMessageSignaturesException: The algorithm or signature-selection policy is invalid.
         """
         if require_components is None:
             require_components = (
@@ -419,7 +445,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             raise InvalidSignature("body must contain bytes before content decoding")
         if body is None:
             body = cls.get_body(message)
-        if (body or "Content-Digest" in message.headers) and not any(cls._is_body_digest(c) for c in required):
+        headers = requests.structures.CaseInsensitiveDict(message.headers)
+        if (body or "Content-Digest" in headers) and not any(cls._is_body_digest(c) for c in required):
             required.setdefault('"content-digest"', "content-digest")
 
         verifier = cls.verifier_class(
