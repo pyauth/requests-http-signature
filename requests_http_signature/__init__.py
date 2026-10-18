@@ -2,19 +2,20 @@ import datetime
 import email.utils
 import hashlib
 import secrets
-from typing import Sequence, Type, Union
+from collections.abc import Sequence
+from typing import ClassVar
 
 import http_sfv
 import requests
-from http_message_signatures import (  # noqa: F401
+from http_message_signatures import (
     HTTPMessageSigner,
     HTTPMessageVerifier,
     HTTPSignatureAlgorithm,
     HTTPSignatureComponentResolver,
     HTTPSignatureKeyResolver,
-    InvalidSignature,
-    algorithms,
 )
+from http_message_signatures import InvalidSignature as InvalidSignature
+from http_message_signatures import algorithms as algorithms
 from http_message_signatures.structures import CaseInsensitiveDict, VerifyResult
 from requests.exceptions import RequestException
 
@@ -83,25 +84,25 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     to customize the retrieval of header and derived component values if needed.
     """
 
-    _content_digest_hashers = {"sha-256": hashlib.sha256, "sha-512": hashlib.sha512}
+    _content_digest_hashers: ClassVar = {"sha-256": hashlib.sha256, "sha-512": hashlib.sha512}
     signing_content_digest_algorithm = "sha-256"
     "The hash algorithm to use to generate the Content-Digest header field (either ``sha-256`` or ``sha-512``)."
 
-    _auto_cover_header_fields = {"authorization", "content-digest", "date"}
+    _auto_cover_header_fields: ClassVar = {"authorization", "content-digest", "date"}
 
     def __init__(
         self,
         *,
-        signature_algorithm: Type[HTTPSignatureAlgorithm],
-        key: bytes = None,
+        signature_algorithm: type[HTTPSignatureAlgorithm],
+        key: bytes | None = None,
         key_id: str,
-        key_resolver: HTTPSignatureKeyResolver = None,
+        key_resolver: HTTPSignatureKeyResolver | None = None,
         covered_component_ids: Sequence[str] = ("@method", "@authority", "@target-uri"),
-        label: str = None,
+        label: str | None = None,
         include_alg: bool = True,
         use_nonce: bool = False,
-        expires_in: datetime.timedelta = None,
-    ):
+        expires_in: datetime.timedelta | None = None,
+    ) -> None:
         if key_resolver is None and key is None:
             raise RequestsHttpSignatureException("Either key_resolver or key must be specified.")
         if key_resolver is not None and key is not None:
@@ -128,12 +129,11 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     def add_digest(self, request):
         if request.body is None and "content-digest" in self.covered_component_ids:
             raise RequestsHttpSignatureException("Could not compute digest header for request without a body")
-        if request.body is not None:
-            if "Content-Digest" not in request.headers:
-                hasher = self._content_digest_hashers[self.signing_content_digest_algorithm]
-                digest = hasher(request.body).digest()
-                digest_node = http_sfv.Dictionary({self.signing_content_digest_algorithm: digest})
-                request.headers["Content-Digest"] = str(digest_node)
+        if request.body is not None and "Content-Digest" not in request.headers:
+            hasher = self._content_digest_hashers[self.signing_content_digest_algorithm]
+            digest = hasher(request.body).digest()
+            digest_node = http_sfv.Dictionary({self.signing_content_digest_algorithm: digest})
+            request.headers["Content-Digest"] = str(digest_node)
 
     def get_nonce(self, request):
         if self.use_nonce:
@@ -182,10 +182,10 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     @classmethod
     def verify(
         cls,
-        message: Union[requests.PreparedRequest, requests.Response],
+        message: requests.PreparedRequest | requests.Response,
         *,
         require_components: Sequence[str] = ("@method", "@authority", "@target-uri"),
-        signature_algorithm: Type[HTTPSignatureAlgorithm],
+        signature_algorithm: type[HTTPSignatureAlgorithm],
         key_resolver: HTTPSignatureKeyResolver,
         max_age: datetime.timedelta = datetime.timedelta(days=1),
     ) -> VerifyResult:
@@ -251,9 +251,12 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         :raises: ``InvalidSignature`` - raised whenever signature validation fails for any reason.
         """
         body = cls.get_body(message)
-        if body is not None:
-            if "content-digest" not in require_components and '"content-digest"' not in require_components:
-                require_components = list(require_components) + ["content-digest"]
+        if (
+            body is not None
+            and "content-digest" not in require_components
+            and '"content-digest"' not in require_components
+        ):
+            require_components = list(require_components) + ["content-digest"]
 
         verifier = HTTPMessageVerifier(
             signature_algorithm=signature_algorithm,
