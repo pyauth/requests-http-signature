@@ -5,7 +5,7 @@ import secrets
 from collections.abc import Sequence
 from typing import ClassVar
 
-import http_sfv
+import http_sf
 import requests
 from http_message_signatures import (
     HTTPMessageSigner,
@@ -16,7 +16,8 @@ from http_message_signatures import (
 )
 from http_message_signatures import InvalidSignature as InvalidSignature
 from http_message_signatures import algorithms as algorithms
-from http_message_signatures.structures import CaseInsensitiveDict, VerifyResult
+from http_message_signatures.structures import VerifyResult
+from http_sf.compat import Dictionary, Item
 from requests.exceptions import RequestException
 
 
@@ -90,6 +91,35 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
 
     _auto_cover_header_fields: ClassVar = {"authorization", "content-digest", "date"}
 
+    @staticmethod
+    def _component_key(component_id: str) -> str:
+        node = Item()
+        node.parse((component_id if component_id.startswith('"') else http_sf.ser(component_id)).encode())
+        if not isinstance(node.value, str) or node.value != node.value.lower():
+            raise RequestsHttpSignatureException("Component names must be lowercase Structured Field strings")
+        # RFC 9421 section 2: compare parameters without changing their wire order.
+        return http_sf.ser((node.value, dict(sorted(node.params.items()))))
+
+    @classmethod
+    def _component_map(cls, component_ids: Sequence[str]) -> dict[str, str]:
+        if isinstance(component_ids, (str, bytes, bytearray)):
+            raise RequestsHttpSignatureException("Components must be a sequence of strings, not a single string")
+        components = {}
+        for component_id in component_ids:
+            key = cls._component_key(component_id)
+            if key in components:
+                raise RequestsHttpSignatureException(f"Duplicate component identifier: {component_id}")
+            components[key] = component_id
+        return components
+
+    @staticmethod
+    def _validate_header_names(message: requests.PreparedRequest | requests.Response) -> None:
+        seen = set()
+        for name in message.headers:
+            if name.lower() in seen:
+                raise RequestsHttpSignatureException(f"Multiple header values match {name!r} case-insensitively")
+            seen.add(name.lower())
+
     def __init__(
         self,
         *,
@@ -132,7 +162,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         if request.body is not None and "Content-Digest" not in request.headers:
             hasher = self._content_digest_hashers[self.signing_content_digest_algorithm]
             digest = hasher(request.body).digest()
-            digest_node = http_sfv.Dictionary({self.signing_content_digest_algorithm: digest})
+            digest_node = Dictionary({self.signing_content_digest_algorithm: digest})
             request.headers["Content-Digest"] = str(digest_node)
 
     def get_nonce(self, request):
@@ -149,14 +179,16 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             return datetime.datetime.now() + self.expires_in
 
     def get_covered_component_ids(self, request):
-        covered_component_ids = CaseInsensitiveDict((k, None) for k in self.covered_component_ids)
-        headers = CaseInsensitiveDict(request.headers)
+        covered_component_ids = self._component_map(self.covered_component_ids)
+        self._validate_header_names(request)
+        headers = {name.lower() for name in request.headers}
         for header in self._auto_cover_header_fields:
             if header in headers:
-                covered_component_ids.setdefault(header, None)
-        return list(covered_component_ids)
+                covered_component_ids.setdefault(self._component_key(header), header)
+        return list(covered_component_ids.values())
 
     def __call__(self, request):
+        self._validate_header_names(request)
         self.add_digest(request)
         created = self.get_created(request)
         expires = self.get_expires(request, created=created)
@@ -184,7 +216,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         cls,
         message: requests.PreparedRequest | requests.Response,
         *,
-        require_components: Sequence[str] = ("@method", "@authority", "@target-uri"),
+        require_components: Sequence[str] | None = None,
         signature_algorithm: type[HTTPSignatureAlgorithm],
         key_resolver: HTTPSignatureKeyResolver,
         max_age: datetime.timedelta = datetime.timedelta(days=1),
@@ -250,13 +282,24 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
 
         :raises: ``InvalidSignature`` - raised whenever signature validation fails for any reason.
         """
+        if require_components is None:
+            require_components = (
+                ("@status", '"@method";req', '"@authority";req', '"@target-uri";req')
+                if isinstance(message, requests.Response)
+                else ("@method", "@authority", "@target-uri")
+            )
+        try:
+            cls._validate_header_names(message)
+            required = cls._component_map(require_components)
+        except (ValueError, TypeError, RequestsHttpSignatureException) as e:
+            raise InvalidSignature(str(e)) from e
         body = cls.get_body(message)
         if (
             body is not None
             and "content-digest" not in require_components
             and '"content-digest"' not in require_components
         ):
-            require_components = list(require_components) + ["content-digest"]
+            required.setdefault('"content-digest"', "content-digest")
 
         verifier = HTTPMessageVerifier(
             signature_algorithm=signature_algorithm,
@@ -267,17 +310,15 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         if len(verify_results) != 1:
             raise InvalidSignature("Multiple signatures are not supported.")
         verify_result = verify_results[0]
-        for component_name in require_components:
-            component_key = component_name
-            if not component_key.startswith('"'):
-                component_key = str(http_sfv.List([http_sfv.Item(component_name)]))
-            if component_key not in verify_result.covered_components:
+        covered = cls._component_map(tuple(verify_result.covered_components))
+        for component_key in required:
+            if component_key not in covered:
                 raise InvalidSignature(f"A required component, {component_key}, was not covered by the signature.")
             if component_key == '"content-digest"':
                 if body is None:
                     raise InvalidSignature("Found a content-digest header in a message with no body")
-                digest = http_sfv.Dictionary()
-                digest.parse(verify_result.covered_components[component_key].encode())
+                digest = Dictionary()
+                digest.parse(verify_result.covered_components[covered[component_key]].encode())
                 if len(digest) < 1:
                     raise InvalidSignature("Found a content-digest header with no digests")
                 for k, v in digest.items():
