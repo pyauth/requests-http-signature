@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 import base64
+import gzip
+import hashlib
 import io
 import json
 import logging
@@ -11,6 +13,7 @@ import unittest
 import http_sf.compat as http_sfv
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.response import HTTPResponse
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -158,6 +161,103 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             self.auth(request)
         with self.assertRaises(InvalidSignature):
             self.verify(request)
+
+    def test_text_form_json_and_multipart_bodies(self):
+        cases = [
+            {"data": "caf\u00e9"},
+            {"data": {"name": "caf\u00e9"}},
+            {"json": {"name": "caf\u00e9"}},
+            {"files": {"file": ("name.txt", b"hello")}},
+        ]
+        for kwargs in cases:
+            with self.subTest(kwargs=kwargs):
+                request = requests.Request("POST", "https://example.com/", auth=self.auth, **kwargs).prepare()
+                self.assertIsInstance(request.body, bytes)
+                self.assertEqual(int(request.headers["Content-Length"]), len(request.body))
+                self.assertEqual(self.verify(request).body, request.body)
+
+    def test_streams_require_supplied_digests_and_are_not_consumed(self):
+        for body in (io.BytesIO(b"hello"), iter([b"hello"])):
+            with self.assertRaisesRegex(RequestsHttpSignatureException, "precomputed Content-Digest"):
+                requests.Request("POST", "https://example.com/", data=body, auth=self.auth).prepare()
+        stream = io.BytesIO(b"prefixhello")
+        stream.seek(6)
+        digest = str(http_sfv.Dictionary({"sha-256": hashlib.sha256(b"hello").digest()}))
+        request = requests.Request(
+            "POST", "https://example.com/", data=stream, headers={"Content-Digest": digest}, auth=self.auth
+        ).prepare()
+        self.assertEqual(stream.tell(), 6)
+        with self.assertRaisesRegex(InvalidSignature, "streaming request requires body="):
+            self.verify(request)
+        self.assertEqual(self.verify(request, body=b"hello").body, b"hello")
+        self.assertEqual(stream.tell(), 6)
+        with self.assertRaises(InvalidSignature):
+            self.verify(request, body=b"changed")
+
+    def test_empty_response_and_explicit_empty_digest(self):
+        response = requests.Response()
+        response.request = requests.Request("GET", "https://example.com/").prepare()
+        response.url = response.request.url
+        response.status_code = 204
+        response._content = b""
+        self.auth.signer.sign(response, key_id=default_keyid, covered_component_ids=("@status",))
+        self.assertIsNone(self.verify(response, require_components=("@status",)).body)
+        self.auth.covered_component_ids = ("content-digest",)
+        request = requests.Request("GET", "https://example.com/", auth=self.auth).prepare()
+        self.assertEqual(self.verify(request, require_components=("content-digest",)).body, b"")
+
+    def test_compressed_response_uses_encoded_bytes(self):
+        encoded = gzip.compress(b"hello")
+        response = requests.Response()
+        response.request = requests.Request("GET", "https://example.com/").prepare()
+        response.url = response.request.url
+        response.status_code = 200
+        response.headers.update(
+            {
+                "Content-Encoding": "gzip",
+                "Content-Digest": str(http_sfv.Dictionary({"sha-256": hashlib.sha256(encoded).digest()})),
+            }
+        )
+        response.raw = HTTPResponse(
+            body=io.BytesIO(encoded), headers=response.headers, preload_content=False, decode_content=False
+        )
+        self.auth.signer.sign(response, key_id=default_keyid, covered_component_ids=("@status", "content-digest"))
+        with self.assertRaisesRegex(InvalidSignature, "Encoded responses require body="):
+            self.verify(response, require_components=("@status",))
+        raw_body = response.raw.read(decode_content=False)
+        result = self.verify(response, require_components=("@status",), body=raw_body)
+        self.assertEqual(gzip.decompress(result.body), b"hello")
+        with self.assertRaises(InvalidSignature):
+            self.verify(response, require_components=("@status",), body=b"hello")
+
+    def test_invalid_digest_fields_raise_invalid_signature(self):
+        digest = str(http_sfv.Dictionary({"sha-256": hashlib.sha256(b"hello").digest()}))
+        for value in ("bad : syntax", "sha-256=(1 2)", "sha-256=1", "", digest + ", " + digest, "unknown=:aGVsbG8=:"):
+            with self.subTest(value=value):
+                request = requests.Request(
+                    "POST", "https://example.com/", data=b"hello", headers={"Content-Digest": value}
+                ).prepare()
+                self.auth.signer.sign(request, key_id=default_keyid, covered_component_ids=("content-digest",))
+                with self.assertRaises(InvalidSignature):
+                    self.verify(request, require_components=())
+
+    def test_selected_digest_member_is_sufficient(self):
+        component = '"content-digest";key="sha-256";sf'
+        self.auth.covered_component_ids = (component,)
+        request = requests.Request("POST", "https://example.com/", data=b"hello", auth=self.auth).prepare()
+        result = self.verify(request, require_components=('"content-digest";sf;key="sha-256"',))
+        self.assertNotIn('"content-digest"', result.covered_components)
+        self.assertEqual(result.body, b"hello")
+
+    def test_stale_supplied_digest_is_rejected_before_signing(self):
+        with self.assertRaisesRegex(RequestsHttpSignatureException, "does not match"):
+            requests.Request(
+                "POST",
+                "https://example.com/",
+                data=b"hello",
+                auth=self.auth,
+                headers={"Content-Digest": str(http_sfv.Dictionary({"sha-256": hashlib.sha256(b"stale").digest()}))},
+            ).prepare()
 
     def test_b21(self):
         url = "https://example.com/foo?param=Value&Pet=dog"

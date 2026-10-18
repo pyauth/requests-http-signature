@@ -1,6 +1,7 @@
 import datetime
 import email.utils
 import hashlib
+import hmac
 import secrets
 from collections.abc import Sequence
 from typing import ClassVar
@@ -157,13 +158,57 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             request.headers["Date"] = email.utils.formatdate(timestamp, usegmt=True)
 
     def add_digest(self, request):
-        if request.body is None and "content-digest" in self.covered_component_ids:
-            raise RequestsHttpSignatureException("Could not compute digest header for request without a body")
-        if request.body is not None and "Content-Digest" not in request.headers:
+        if isinstance(request.body, str):
+            request.body = request.body.encode("utf-8")
+        elif isinstance(request.body, (bytearray, memoryview)):
+            request.body = bytes(request.body)
+        if request.body is not None and not isinstance(request.body, bytes):
+            if "Content-Digest" not in request.headers:
+                raise RequestsHttpSignatureException(
+                    "Streaming bodies require a precomputed Content-Digest header; the stream is not read or rewound"
+                )
+            return
+        body = request.body or b""
+        if "Content-Digest" in request.headers:
+            try:
+                self._verify_digest(request.headers["Content-Digest"], body)
+            except InvalidSignature as e:
+                raise RequestsHttpSignatureException(str(e)) from e
+        elif request.body is not None or any(self._is_body_digest(c) for c in self.covered_component_ids):
             hasher = self._content_digest_hashers[self.signing_content_digest_algorithm]
-            digest = hasher(request.body).digest()
-            digest_node = Dictionary({self.signing_content_digest_algorithm: digest})
-            request.headers["Content-Digest"] = str(digest_node)
+            request.headers["Content-Digest"] = str(
+                Dictionary({self.signing_content_digest_algorithm: hasher(body).digest()})
+            )
+
+    @staticmethod
+    def _is_body_digest(component_id: str) -> bool:
+        node = Item()
+        node.parse((component_id if component_id.startswith('"') else http_sf.ser(component_id)).encode())
+        return node.value == "content-digest" and "req" not in node.params
+
+    @classmethod
+    def _verify_digest(cls, value: str, body: bytes, *, key: str | None = None) -> None:
+        def reject_duplicate(name: str, context: str) -> None:
+            if context == "dictionary":
+                raise InvalidSignature(f"Duplicate content digest algorithm {name!r}")
+
+        try:
+            parsed = http_sf.parse(
+                value.encode(), tltype="dictionary" if key is None else "item", on_duplicate_key=reject_duplicate
+            )
+        except (ValueError, TypeError) as e:
+            raise InvalidSignature("Malformed Content-Digest field") from e
+        digests = parsed if key is None else {key: parsed}
+        if not isinstance(digests, dict) or not digests:
+            raise InvalidSignature("Found a content-digest header with no digests")
+        for algorithm, member in digests.items():
+            if not isinstance(member, tuple) or not isinstance(member[0], bytes):
+                raise InvalidSignature("Content digest values must be Structured Field byte sequences")
+            if algorithm not in cls._content_digest_hashers:
+                raise InvalidSignature(f'Unsupported content digest algorithm "{algorithm}"')
+            expected = cls._content_digest_hashers[algorithm](body).digest()
+            if not hmac.compare_digest(member[0], expected):
+                raise InvalidSignature("The content-digest header does not match the message body")
 
     def get_nonce(self, request):
         if self.use_nonce:
@@ -184,6 +229,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         headers = {name.lower() for name in request.headers}
         for header in self._auto_cover_header_fields:
             if header in headers:
+                if header == "content-digest" and any(self._is_body_digest(c) for c in covered_component_ids.values()):
+                    continue
                 covered_component_ids.setdefault(self._component_key(header), header)
         return list(covered_component_ids.values())
 
@@ -208,8 +255,25 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     @classmethod
     def get_body(cls, message):
         if isinstance(message, requests.Response):
+            if (
+                message.status_code in (204, 304)
+                or 100 <= message.status_code < 200
+                or (message.request is not None and message.request.method == "HEAD")
+            ):
+                return b""
+            if message.headers.get("Content-Encoding", "identity").lower() != "identity":
+                raise InvalidSignature(
+                    "Encoded responses require body= with encoded bytes: request stream=True, "
+                    "then read response.raw.read(decode_content=False) before accessing response.content"
+                )
             return message.content
-        return message.body
+        if isinstance(message.body, str):
+            return message.body.encode("utf-8")
+        if isinstance(message.body, (bytes, bytearray, memoryview)):
+            return bytes(message.body)
+        if message.body is not None:
+            raise InvalidSignature("Verifying a streaming request requires body= with the transmitted bytes")
+        return None
 
     @classmethod
     def verify(
@@ -220,6 +284,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         signature_algorithm: type[HTTPSignatureAlgorithm],
         key_resolver: HTTPSignatureKeyResolver,
         max_age: datetime.timedelta = datetime.timedelta(days=1),
+        body: bytes | None = None,
     ) -> VerifyResult:
         """
         Verify an HTTP message signature.
@@ -293,12 +358,11 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             required = cls._component_map(require_components)
         except (ValueError, TypeError, RequestsHttpSignatureException) as e:
             raise InvalidSignature(str(e)) from e
-        body = cls.get_body(message)
-        if (
-            body is not None
-            and "content-digest" not in require_components
-            and '"content-digest"' not in require_components
-        ):
+        if body is not None and not isinstance(body, bytes):
+            raise InvalidSignature("body must contain bytes before content decoding")
+        if body is None:
+            body = cls.get_body(message)
+        if (body or "Content-Digest" in message.headers) and not any(cls._is_body_digest(c) for c in required):
             required.setdefault('"content-digest"', "content-digest")
 
         verifier = HTTPMessageVerifier(
@@ -314,20 +378,11 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         for component_key in required:
             if component_key not in covered:
                 raise InvalidSignature(f"A required component, {component_key}, was not covered by the signature.")
-            if component_key == '"content-digest"':
-                if body is None:
-                    raise InvalidSignature("Found a content-digest header in a message with no body")
-                digest = Dictionary()
-                digest.parse(verify_result.covered_components[covered[component_key]].encode())
-                if len(digest) < 1:
-                    raise InvalidSignature("Found a content-digest header with no digests")
-                for k, v in digest.items():
-                    if k not in cls._content_digest_hashers:
-                        raise InvalidSignature(f'Unsupported content digest algorithm "{k}"')
-                    raw_digest = v.value
-                    hasher = cls._content_digest_hashers[k]
-                    expect_digest = hasher(body).digest()
-                    if raw_digest != expect_digest:
-                        raise InvalidSignature("The content-digest header does not match the message body")
-                    verify_result = verify_result._replace(body=body)
+            if cls._is_body_digest(component_key):
+                node = Item()
+                node.parse(component_key.encode())
+                cls._verify_digest(
+                    verify_result.covered_components[covered[component_key]], body or b"", key=node.params.get("key")
+                )
+                verify_result = verify_result._replace(body=body or b"")
         return verify_result
