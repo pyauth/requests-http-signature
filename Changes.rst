@@ -1,3 +1,20 @@
+Changes for v1.0.0 (2026-10-18)
+===============================
+
+-  Require and document http-message-signatures 2.1.0
+
+-  Use http-sf instead of deprecated http-sfv
+
+-  Document supported request workflows and type the public API
+
+-  Integrate external signing and signature selection policies
+
+-  Validate request and response content digests over transmitted bytes
+
+-  Align component coverage and response verification with RFC 9421
+
+-  Test and documentation improvements
+
 Changes for v0.7.1 (2022-04-19)
 ===============================
 
