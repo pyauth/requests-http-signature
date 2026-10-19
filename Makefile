@@ -11,7 +11,7 @@ init_docs:
 	cd docs; sphinx-quickstart
 
 docs:
-	sphinx-build docs docs/html
+	python -m sphinx -W --keep-going docs docs/html
 
 install:
 	-rm -rf dist

@@ -31,6 +31,7 @@ dependencies = [
 Homepage = "https://github.com/pyauth/requests-http-signature"
 
 [project.optional-dependencies]
+docs = ["sphinx >= 7", "furo", "sphinx-copybutton"]
 tests = [
     "coverage",
     "build",

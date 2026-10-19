@@ -1,34 +1,26 @@
-import os
-import sys
-
-import guzzle_sphinx_theme
-
-sys.path.insert(0, os.path.abspath(".."))
-
 project = "requests-http-signature"
 copyright = "Andrey Kislyuk"
 author = "Andrey Kislyuk"
 version = ""
 release = ""
-language = None
+language = "en"
 master_doc = "index"
-extensions = ["sphinx.ext.autodoc", "sphinx.ext.viewcode"]
+extensions = ["sphinx.ext.autodoc", "sphinx.ext.viewcode", "sphinx_copybutton"]
 source_suffix = [".rst", ".md"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "html", "Thumbs.db", ".DS_Store"]
 pygments_style = "sphinx"
 autodoc_typehints = "description"
+autodoc_member_order = "bysource"
+autoclass_content = "both"
 
-html_theme_path = guzzle_sphinx_theme.html_theme_path()
-html_theme = "guzzle_sphinx_theme"
-html_theme_options = {
-    "project_nav_name": project,
-    "projectlink": "https://github.com/kislyuk/" + project,
-}
+templates_path = [""]
+html_theme = "furo"
 html_sidebars = {
     "**": [
-        "logo-text.html",
-        # "globaltoc.html",
-        "localtoc.html",
-        "searchbox.html",
+        "sidebar/brand.html",
+        "sidebar/search.html",
+        "sidebar/scroll-start.html",
+        "toc.html",
+        "sidebar/scroll-end.html",
     ]
 }
