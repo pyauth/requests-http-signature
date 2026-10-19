@@ -178,13 +178,13 @@ error instead of choosing a value. It cannot recover field lines already discard
 Dictionary-member coverage such as ``'"content-digest";key="sha-256";sf'`` is supported. Its parameter order may differ
 in ``require_components``; the signed wire order is preserved. A covered digest member suffices for body validation
 without requiring the whole Content-Digest field. ``@request-response`` and unsupported Structured Field flags are
-not implemented; use the dependency's supported component profiles.
+not implemented.
 
 External signing
 ~~~~~~~~~~~~~~~~
 Use ``prepare()`` and ``apply()`` on a fully prepared Requests request when a remote service holds the private key.
 No local key or resolver is needed. The auth object prepares the body digest, Date, covered components, nonce, and
-creation/expiration parameters, then returns the dependency's ``PreparedSignature``::
+creation/expiration parameters, then returns a ``PreparedSignature``::
 
   session = requests.Session()
   external_auth = HTTPSignatureAuth(key_id="remote-ed25519-key", signature_algorithm=algorithms.ED25519, tag="my-app")
@@ -202,7 +202,7 @@ local signing. Use a session without another request-signing auth handler when p
 request. It does not authenticate the external service, verify its signature, refresh timestamps, or validate a stream
 against a supplied digest. Keep the prepared object associated with the right request and keep that request stable
 until sending. For DER-encoded ECDSA output, use ``algorithms.ECDSA_P256_SHA256.signature_from_der()`` before applying it.
-See the dependency's `external-signing documentation
+See the `http-message-signatures external-signing documentation
 <https://github.com/pyauth/http-message-signatures/tree/v2.1.0#remote-and-asynchronous-signing>`_ for algorithm input requirements.
 
 Signature selection and verification policies
@@ -263,8 +263,8 @@ Links
 * `Package documentation <https://pyauth.github.io/requests-http-signature/>`_
 * `Package distribution (PyPI) <https://pypi.python.org/pypi/requests-http-signature>`_
 * `Change log <https://github.com/pyauth/requests-http-signature/blob/master/Changes.rst>`_
-* `http-message-signatures <https://github.com/pyauth/http-message-signatures>`_ - a dependency of this library that
-  handles much of the implementation
+* `http-message-signatures <https://github.com/pyauth/http-message-signatures>`_ - implements HTTP message signing
+  and verification
 * `IETF RFC 9421, HTTP Message Signatures <https://datatracker.ietf.org/doc/rfc9421/>`_
 
 Bugs
