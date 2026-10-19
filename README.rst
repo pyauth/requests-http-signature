@@ -273,7 +273,7 @@ Please report bugs, issues, feature requests, etc. on `GitHub <https://github.co
 
 License
 -------
-Copyright 2017-2024, Andrey Kislyuk and requests-http-signature contributors. Licensed under the terms of the
+Copyright 2017-2026, Andrey Kislyuk and requests-http-signature contributors. Licensed under the terms of the
 `Apache License, Version 2.0 <http://www.apache.org/licenses/LICENSE-2.0>`_. Distribution of attribution information,
 LICENSE and NOTICE files with source copies of this package and derivative works is **REQUIRED** as specified by the
 Apache License.
