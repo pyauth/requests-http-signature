@@ -11,6 +11,9 @@ Installation
 
     $ pip install requests-http-signature
 
+Requires Requests 2.34.2 or later and http-message-signatures 2.1.0 or later. The signing, verification, and
+external-signing examples below use the APIs published in http-message-signatures 2.1.0.
+
 Usage
 -----
 
@@ -200,7 +203,7 @@ request. It does not authenticate the external service, verify its signature, re
 against a supplied digest. Keep the prepared object associated with the right request and keep that request stable
 until sending. For DER-encoded ECDSA output, use ``algorithms.ECDSA_P256_SHA256.signature_from_der()`` before applying it.
 See the dependency's `external-signing documentation
-<https://github.com/pyauth/http-message-signatures#remote-and-asynchronous-signing>`_ for algorithm input requirements.
+<https://github.com/pyauth/http-message-signatures/tree/v2.1.0#remote-and-asynchronous-signing>`_ for algorithm input requirements.
 
 Signature selection and verification policies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
