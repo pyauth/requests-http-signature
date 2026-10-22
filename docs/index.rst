@@ -10,6 +10,7 @@ API documentation
    :maxdepth: 2
    :caption: Contents:
 
+   security-review
 
 * :ref:`genindex`
 * :ref:`modindex`

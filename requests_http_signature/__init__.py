@@ -22,9 +22,10 @@ from http_sf.compat import Dictionary, Item
 from requests.exceptions import RequestException
 from urllib3 import HTTPHeaderDict
 
-from ._headers import header_values
+from ._headers import check_message_size, header_values, message_snapshot
 from .resolvers import HTTPSignatureComponentResolver as HTTPSignatureComponentResolver
 from .signatures import HTTPMessageSigner as HTTPMessageSigner
+from .signatures import SingleSignatureVerifier
 
 
 class RequestsHttpSignatureException(RequestException):
@@ -94,8 +95,17 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     to customize the retrieval of header and derived component values if needed.
     """
 
-    verifier_class: type[HTTPMessageVerifier] = HTTPMessageVerifier
+    verifier_class: type[HTTPMessageVerifier] = SingleSignatureVerifier
     "A verifier subclass can configure creation-time requirements and clock-skew tolerance."
+
+    verification_max_header_bytes = 64 * 1024
+    "Maximum header text size, counting each field name and value plus four separator characters."
+    verification_max_header_count = 100
+    "Maximum number of field lines in each header view, including raw response headers when available."
+    verification_max_signature_field_bytes = 16 * 1024
+    "Maximum combined size of each Signature or Signature-Input field before parsing."
+    verification_max_url_length = 8192
+    "Maximum request URL length before parsing, including a response's associated request."
 
     _content_digest_hashers: ClassVar = {"sha-256": hashlib.sha256, "sha-512": hashlib.sha512}
     signing_content_digest_algorithm = "sha-256"
@@ -227,13 +237,19 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         digests = parsed if key is None else {key: parsed}
         if not isinstance(digests, dict) or not digests:
             raise InvalidSignature("Found a content-digest header with no digests")
+        validated_digests: dict[str, bytes] = {}
         for algorithm, member in digests.items():
             if not isinstance(member, tuple) or not isinstance(member[0], bytes):
                 raise InvalidSignature("Content digest values must be Structured Field byte sequences")
             if algorithm not in cls._content_digest_hashers:
                 raise InvalidSignature(f'Unsupported content digest algorithm "{algorithm}"')
+            if len(member[0]) != cls._content_digest_hashers[algorithm]().digest_size:
+                raise InvalidSignature("Content digest length does not match its algorithm")
+            validated_digests[algorithm] = member[0]
+        # Validate every member before hashing potentially large content.
+        for algorithm, digest in validated_digests.items():
             expected = cls._content_digest_hashers[algorithm](body).digest()
-            if not hmac.compare_digest(member[0], expected):
+            if not hmac.compare_digest(digest, expected):
                 raise InvalidSignature("The content-digest header does not match the message body")
 
     def get_nonce(self, request: requests.PreparedRequest) -> str | None:
@@ -438,7 +454,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             * ``nonce``: The signed nonce, or ``None``. Applications must enforce replay detection.
             * ``body``: Content bytes before decoding, after validating their covered digest; ``None`` otherwise.
 
-        :raises InvalidSignature: Signature, required coverage, or body-digest validation fails.
+        :raises InvalidSignature: A verification size limit is exceeded, or signature, coverage, or digest validation fails.
         :raises HTTPMessageSignaturesException: The algorithm or signature-selection policy is invalid.
         """
         if require_components is None:
@@ -448,30 +464,45 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                 else ("@method", "@authority", "@target-uri")
             )
         try:
+            check_message_size(
+                message,
+                max_header_bytes=cls.verification_max_header_bytes,
+                max_header_count=cls.verification_max_header_count,
+                max_signature_field_bytes=cls.verification_max_signature_field_bytes,
+                max_url_length=cls.verification_max_url_length,
+            )
             cls._validate_header_names(message)
             required = cls._component_map(require_components)
-        except (ValueError, TypeError, RequestsHttpSignatureException) as e:
+            signed_message = message_snapshot(message)
+        except (ValueError, TypeError, RequestsHttpSignatureException, HTTPMessageSignaturesException) as e:
             raise InvalidSignature(str(e)) from e
         if body is not None and not isinstance(body, bytes):
             raise InvalidSignature("body must contain bytes before content decoding")
-        if body is None:
-            body = cls.get_body(message)
-        headers = requests.structures.CaseInsensitiveDict(message.headers)
-        if (body or "Content-Digest" in headers) and not any(cls._is_body_digest(c) for c in required):
-            required.setdefault('"content-digest"', "content-digest")
-
         verifier = cls.verifier_class(
             signature_algorithm=signature_algorithm,
             key_resolver=key_resolver,
             component_resolver_class=cls.component_resolver_class,
         )
-        verify_results = verifier.verify(message, max_age=max_age, expect_tag=expect_tag, expect_label=expect_label)
+        verify_results = verifier.verify(
+            signed_message, max_age=max_age, expect_tag=expect_tag, expect_label=expect_label
+        )
         if len(verify_results) != 1:
             raise InvalidSignature("Select a single signature using expect_tag and expect_label")
         verify_result = verify_results[0]
         covered = cls._component_map(tuple(verify_result.covered_components))
-        if len(header_values(message).get("set-cookie", ())) > 1:
+        if len(header_values(signed_message).get("set-cookie", ())) > 1:
             required.setdefault('"set-cookie";bs', '"set-cookie";bs')
+        if "Content-Digest" in signed_message.headers and not any(cls._is_body_digest(c) for c in required):
+            required.setdefault('"content-digest"', "content-digest")
+        # Reject missing coverage before reading a response body. Otherwise even
+        # malformed or unauthenticated signatures could trigger an unbounded read.
+        for component_key in required:
+            if component_key not in covered:
+                raise InvalidSignature(f"A required component, {component_key}, was not covered by the signature.")
+        if body is None:
+            body = cls.get_body(message)
+        if body and not any(cls._is_body_digest(c) for c in required):
+            required.setdefault('"content-digest"', "content-digest")
         for component_key in required:
             if component_key not in covered:
                 raise InvalidSignature(f"A required component, {component_key}, was not covered by the signature.")

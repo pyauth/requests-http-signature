@@ -1,14 +1,30 @@
-"""Signing policy for Requests messages with repeated Set-Cookie fields."""
+"""Signature selection and repeated Set-Cookie policy for Requests messages."""
 
 from collections.abc import Sequence
 from typing import Any
 
 from http_message_signatures import HTTPMessageSigner as BaseMessageSigner
-from http_message_signatures import HTTPSignatureAlgorithm, HTTPSignatureKeyResolver, PreparedSignature
+from http_message_signatures import (
+    HTTPMessageVerifier,
+    HTTPSignatureAlgorithm,
+    HTTPSignatureKeyResolver,
+    InvalidSignature,
+    PreparedSignature,
+)
 from http_message_signatures.exceptions import HTTPMessageSignaturesException
 
 from ._headers import header_values
 from .resolvers import HTTPSignatureComponentResolver
+
+
+class SingleSignatureVerifier(HTTPMessageVerifier):
+    """Enforce this package's single-signature policy before key resolution."""
+
+    def _get_sig_inputs_and_signatures(self, message: Any, **kwargs: Any) -> Any:
+        selected = list(super()._get_sig_inputs_and_signatures(message, **kwargs))
+        if len(selected) != 1:
+            raise InvalidSignature("Select a single signature using expect_tag and expect_label")
+        return iter(selected)
 
 
 class HTTPMessageSigner(BaseMessageSigner):

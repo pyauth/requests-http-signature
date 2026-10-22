@@ -252,16 +252,15 @@ Set a signed application ``tag`` when signing. To preserve another signature, al
   result = HTTPSignatureAuth.verify(message, signature_algorithm=algorithms.HMAC_SHA256,
                                     key_resolver=MyKeyResolver(), expect_tag="my-app", expect_label="sig1")
 
-Selection must leave one verified signature. Labels are not signed, so the default policy requires ``expect_tag`` when
-``expect_label`` is used. Use ``result.nonce`` to enforce your application's replay policy.
+Selection must leave one candidate before key lookup or cryptographic verification. Labels are not signed, so the
+default policy requires ``expect_tag`` when ``expect_label`` is used. Use ``result.nonce`` to enforce your application's
+replay policy.
 
 ``max_age=None`` disables the age limit but retains expiration checks. Customize the existing verifier class to change
 creation-time requirements or clock skew::
 
   import datetime
-  from http_message_signatures import HTTPMessageVerifier
-
-  class MyVerifier(HTTPMessageVerifier):
+  class MyVerifier(HTTPSignatureAuth.verifier_class):
       require_created = False
       max_clock_skew = datetime.timedelta(seconds=30)
 
@@ -270,6 +269,35 @@ creation-time requirements or clock skew::
 
   result = MyAuth.verify(message, signature_algorithm=algorithms.HMAC_SHA256,
                          key_resolver=MyKeyResolver(), max_age=None)
+
+Verification resource limits
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``verify()`` checks message sizes before normalizing headers, parsing Structured Fields, or looking up keys.
+The default limits are 64 KiB of header text, 100 field lines, 16 KiB each for Signature and Signature-Input, and
+8192 characters for the request URL. Header size counts each name and value plus four characters for separators;
+HTTP field strings represent Latin-1 octets. Repeated signature field lines share one budget, including their
+comma-space separators. A response's public and raw headers are checked separately, as is its associated request.
+Exceeding a limit raises ``InvalidSignature``. Override these policies for an application's expected message sizes::
+
+  class LimitedAuth(HTTPSignatureAuth):
+      verification_max_header_bytes = 64 * 1024
+      verification_max_header_count = 100
+      verification_max_signature_field_bytes = 16 * 1024
+      verification_max_url_length = 8192
+
+  result = LimitedAuth.verify(message, signature_algorithm=algorithms.HMAC_SHA256,
+                              key_resolver=MyKeyResolver())
+
+Repeated fields are combined once, and dictionary fields, query strings, and associated request components share
+parsing work within each verification. The existing Structured Fields and URL parsers still handle syntax.
+Caches do not survive a verification call. Subclass ``HTTPSignatureAuth.verifier_class`` to retain the default
+single-candidate check when customizing verifier policies.
+
+Signature verification and known coverage checks precede automatic response body reads. Use ``stream=True`` to
+prevent Requests from downloading the body first. A valid signature can still accompany oversized content: these
+limits do not bound body size, download time, key lookup time, or the number of calls. Set network timeouts and an
+application body-size limit; for downloads, capture bounded encoded bytes and supply them as ``body=``. Body digest
+validation still buffers and hashes those bytes. Signing does not impose the verification size limits.
 
 Redirects
 ~~~~~~~~~

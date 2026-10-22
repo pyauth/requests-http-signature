@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import unittest
+from unittest import mock
 from urllib.parse import urljoin, urlsplit
 
 import http_sf.compat as http_sfv
@@ -617,6 +618,203 @@ class TestBinaryWrapping(unittest.TestCase):
         request.headers["Set-Cookie"] = "a=1, b=2"
         with self.assertRaises(HTTPMessageSignaturesException):
             self.auth.apply(request, prepared, signature)
+
+
+class TestVerificationWorkLimits(unittest.TestCase):
+    def setUp(self):
+        self.auth = HTTPSignatureAuth(key_id=default_keyid, key=hmac_secret, signature_algorithm=algorithms.HMAC_SHA256)
+
+    def verify(self, message, auth_class=HTTPSignatureAuth, **kwargs):
+        return auth_class.verify(
+            message, signature_algorithm=algorithms.HMAC_SHA256, key_resolver=self.auth.signer.key_resolver, **kwargs
+        )
+
+    def request(self):
+        return requests.Request("GET", "https://example.com/", auth=self.auth).prepare()
+
+    def response(self):
+        response = requests.Response()
+        response.status_code = 200
+        response.request = self.request()
+        response.raw = mock.Mock()
+        response.raw.stream.side_effect = AssertionError("Response body must not be read")
+        self.auth.signer.sign(response, key_id=default_keyid, covered_component_ids=("@status",))
+        return response
+
+    def test_size_limits_run_before_structured_field_parsing_and_key_resolution(self):
+        cases = [
+            ("headers", lambda r: r.headers.update({"X-Large": "a" * 65536})),
+            ("count", lambda r: r.headers.update({f"X-{i}": "a" for i in range(101)})),
+            ("signature", lambda r: r.headers.update({"Signature": "a" * 16385})),
+            ("input", lambda r: r.headers.update({"Signature-Input": "a" * 16385})),
+            ("url", lambda r: setattr(r, "url", "https://example.com/" + "a" * 8192)),
+        ]
+        for label, change in cases:
+            with self.subTest(case=label):
+                request = self.request()
+                change(request)
+                with (
+                    mock.patch.object(HTTPMessageVerifier, "_parse_dict_header") as parse,
+                    mock.patch.object(self.auth.signer.key_resolver, "resolve_public_key") as resolve,
+                    self.assertRaisesRegex(InvalidSignature, "limit"),
+                ):
+                    self.verify(request)
+                parse.assert_not_called()
+                resolve.assert_not_called()
+
+    def test_limits_include_raw_response_fields_and_associated_request(self):
+        response = self.response()
+        raw_headers = HTTPHeaderDict(response.headers)
+        for i in range(101):
+            raw_headers.add("Set-Cookie", f"cookie{i}=1")
+        response.raw = HTTPResponse(body=io.BytesIO(b""), headers=raw_headers, status=200, preload_content=False)
+        response.headers = requests.structures.CaseInsensitiveDict(raw_headers)
+        with self.assertRaisesRegex(InvalidSignature, "limit"):
+            self.verify(response, require_components=("@status",), body=b"")
+        response = self.response()
+        response.request.url += "a" * 8192
+        with self.assertRaisesRegex(InvalidSignature, "limit"):
+            self.verify(response, require_components=("@status",), body=b"")
+
+    def test_split_signature_fields_share_one_size_budget(self):
+        request = self.request()
+        request.headers["Signature-Input"] = "a" * 9000
+        request.headers.add("Signature-Input", "b" * 9000)
+        with (
+            mock.patch.object(HTTPMessageVerifier, "_parse_dict_header") as parse,
+            self.assertRaisesRegex(InvalidSignature, "Signature field"),
+        ):
+            self.verify(request)
+        parse.assert_not_called()
+
+    def test_size_budgets_accept_the_boundary_and_reject_one_less(self):
+        request = self.request()
+        limits = {
+            "verification_max_header_bytes": sum(len(k) + len(v) + 4 for k, v in request.headers.items()),
+            "verification_max_header_count": len(request.headers),
+            "verification_max_signature_field_bytes": max(
+                len(request.headers["Signature"]), len(request.headers["Signature-Input"])
+            ),
+            "verification_max_url_length": len(request.url),
+        }
+        fits = type("Fits", (HTTPSignatureAuth,), limits)
+        self.verify(request, auth_class=fits)
+        for name, value in limits.items():
+            too_small = type("TooSmall", (fits,), {name: value - 1})
+            with self.subTest(limit=name), self.assertRaisesRegex(InvalidSignature, "limit"):
+                self.verify(request, auth_class=too_small)
+
+    def test_verification_limits_can_be_increased_for_application_profiles(self):
+        class LargeHeaders(HTTPSignatureAuth):
+            verification_max_header_bytes = 128 * 1024
+
+        self.auth.covered_component_ids = ("x-large",)
+        request = requests.Request(
+            "GET", "https://example.com/", headers={"X-Large": "a" * 70000}, auth=self.auth
+        ).prepare()
+        with self.assertRaisesRegex(InvalidSignature, "limit"):
+            self.verify(request, require_components=("x-large",))
+        self.verify(request, auth_class=LargeHeaders, require_components=("x-large",))
+
+    def test_invalid_signatures_and_missing_coverage_do_not_read_response(self):
+        for change in ("missing", "malformed", "bad-signature", "missing-coverage", "unsigned-digest"):
+            with self.subTest(change=change):
+                response = self.response()
+                requirements = ("@status",)
+                if change == "missing":
+                    del response.headers["Signature-Input"]
+                elif change == "malformed":
+                    response.headers["Signature-Input"] = 'sig=("unclosed'
+                elif change == "bad-signature":
+                    response.headers["Signature"] = str(http_sfv.Dictionary({"pyhms": b"x" * 32}))
+                elif change == "missing-coverage":
+                    requirements = ("@status", '"@method";req')
+                else:
+                    response.headers["Content-Digest"] = "sha-256=:AA==:"
+                with self.assertRaises(InvalidSignature):
+                    self.verify(response, require_components=requirements)
+                response.raw.stream.assert_not_called()
+
+    def test_ambiguous_selection_is_rejected_before_key_resolution(self):
+        request = self.request()
+        self.auth.signer.sign(request, key_id=default_keyid, tag="same", label="first")
+        self.auth.signer.sign(
+            request, key_id=default_keyid, tag="same", label="second", append_if_signature_exists=True
+        )
+        with (
+            mock.patch.object(self.auth.signer.key_resolver, "resolve_public_key") as resolve,
+            self.assertRaisesRegex(InvalidSignature, "single signature"),
+        ):
+            self.verify(request, expect_tag="same")
+        resolve.assert_not_called()
+        self.verify(request, expect_tag="same", expect_label="first")
+
+    def test_dictionary_and_query_parsing_is_cached_for_one_verification(self):
+        from requests_http_signature import resolvers
+
+        self.auth.covered_component_ids = (
+            '"example-dict";key="a"',
+            '"example-dict";key="b"',
+            '"@query-param";name="a"',
+            '"@query-param";name="b"',
+        )
+        request = requests.Request(
+            "GET", "https://example.com/?a=one&b=two", headers={"Example-Dict": "a=1, b=2"}, auth=self.auth
+        ).prepare()
+        parse_dictionary = http_sfv.Dictionary.parse
+        with (
+            mock.patch.object(http_sfv.Dictionary, "parse", autospec=True, side_effect=parse_dictionary) as dictionary,
+            mock.patch.object(resolvers, "parse_qs", wraps=resolvers.parse_qs) as query,
+        ):
+            self.verify(request, require_components=self.auth.covered_component_ids)
+        self.assertEqual(dictionary.call_count, 1)
+        self.assertEqual(query.call_count, 1)
+        # No cache may survive verification of another message or later edits.
+        request.headers["Example-Dict"] = "a=3, b=2"
+        with self.assertRaises(InvalidSignature):
+            self.verify(request, require_components=self.auth.covered_component_ids)
+
+    def test_associated_request_components_share_a_resolver(self):
+        from requests_http_signature import resolvers
+
+        response = self.response()
+        response.request.url = "https://example.com/?a=one&b=two"
+        components = (
+            "@status",
+            '"@method";req',
+            '"@authority";req',
+            '"@query-param";req;name="a"',
+            '"@query-param";req;name="b"',
+        )
+        self.auth.signer.sign(response, key_id=default_keyid, covered_component_ids=components)
+        with mock.patch.object(resolvers, "parse_qs", wraps=resolvers.parse_qs) as query:
+            self.verify(response, require_components=components, body=b"")
+        self.assertEqual(query.call_count, 1)
+
+    def test_header_snapshot_combines_once_and_preserves_wrapping(self):
+        from requests_http_signature._headers import message_snapshot
+
+        request = self.request()
+        request.headers = HTTPHeaderDict([("X-Value", " one "), ("X-Value", "\ttwo\t")])
+        snapshot = message_snapshot(request)
+        self.assertEqual(list(snapshot.headers.items()), [("x-value", "one, two")])
+        self.assertEqual(snapshot.headers.field_values["x-value"], [" one ", "\ttwo\t"])
+        self.assertEqual(request.headers.getlist("X-Value"), [" one ", "\ttwo\t"])
+
+    def test_invalid_digest_members_are_rejected_before_body_hashing(self):
+        hashed = []
+
+        def sha256(data=b""):
+            if data:
+                hashed.append(data)
+            return hashlib.sha256(data)
+
+        valid = str(http_sfv.Dictionary({"sha-256": hashlib.sha256(b"body").digest()}))
+        with mock.patch.dict(HTTPSignatureAuth._content_digest_hashers, {"sha-256": sha256}):
+            for value in (valid + ", unknown=:AA==:", valid + ", sha-512=:AA==:", "sha-256=:AA==:"):
+                with self.subTest(value=value), self.assertRaises(InvalidSignature):
+                    HTTPSignatureAuth._verify_digest(value, b"body")
+        self.assertEqual(hashed, [])
 
 
 if __name__ == "__main__":
