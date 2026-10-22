@@ -9,18 +9,22 @@ from typing import ClassVar, cast
 import http_sf
 import requests
 from http_message_signatures import (
-    HTTPMessageSigner,
     HTTPMessageVerifier,
     HTTPSignatureAlgorithm,
-    HTTPSignatureComponentResolver,
     HTTPSignatureKeyResolver,
 )
 from http_message_signatures import InvalidSignature as InvalidSignature
 from http_message_signatures import PreparedSignature as PreparedSignature
 from http_message_signatures import VerifyResult as VerifyResult
 from http_message_signatures import algorithms as algorithms
+from http_message_signatures.exceptions import HTTPMessageSignaturesException
 from http_sf.compat import Dictionary, Item
 from requests.exceptions import RequestException
+from urllib3 import HTTPHeaderDict
+
+from ._headers import header_values
+from .resolvers import HTTPSignatureComponentResolver as HTTPSignatureComponentResolver
+from .signatures import HTTPMessageSigner as HTTPMessageSigner
 
 
 class RequestsHttpSignatureException(RequestException):
@@ -129,11 +133,16 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
 
     @staticmethod
     def _validate_header_names(message: requests.PreparedRequest | requests.Response) -> None:
-        seen = set()
-        for name in message.headers:
-            if name.lower() in seen:
-                raise RequestsHttpSignatureException(f"Multiple header values match {name!r} case-insensitively")
-            seen.add(name.lower())
+        try:
+            fields = header_values(message)
+        except HTTPMessageSignaturesException as e:
+            raise RequestsHttpSignatureException(str(e)) from e
+        # A plain dict with differently cased keys is ambiguous. Containers
+        # exposing field lines explicitly (such as HTTPHeaderDict) preserve order.
+        if isinstance(message.headers, dict):
+            for name, values in fields.items():
+                if len(values) > 1 and name != "set-cookie":
+                    raise RequestsHttpSignatureException(f"Multiple header values match {name!r} case-insensitively")
 
     def __init__(
         self,
@@ -261,7 +270,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         """
         self._component_map(self.covered_component_ids)
         self._validate_header_names(request)
-        request.headers = requests.structures.CaseInsensitiveDict(request.headers)
+        # Requests accepts this mutable header mapping; its stubs name only its
+        # default CaseInsensitiveDict, which cannot retain repeated field lines.
+        request.headers = HTTPHeaderDict(request.headers.items())  # type: ignore[assignment]
         self.add_digest(request)
         created = self.get_created(request)
         expires = self.get_expires(request, created=created)
@@ -459,14 +470,28 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             raise InvalidSignature("Select a single signature using expect_tag and expect_label")
         verify_result = verify_results[0]
         covered = cls._component_map(tuple(verify_result.covered_components))
+        if len(header_values(message).get("set-cookie", ())) > 1:
+            required.setdefault('"set-cookie";bs', '"set-cookie";bs')
         for component_key in required:
             if component_key not in covered:
                 raise InvalidSignature(f"A required component, {component_key}, was not covered by the signature.")
             if cls._is_body_digest(component_key):
                 node = Item()
                 node.parse(component_key.encode())
-                cls._verify_digest(
-                    verify_result.covered_components[covered[component_key]], body or b"", key=node.params.get("key")
-                )
+                value = verify_result.covered_components[covered[component_key]]
+                if "bs" in node.params:
+                    # Decode the authenticated byte sequences with the same
+                    # Structured Fields parser used for all other components.
+                    wrapped = http_sf.parse(value.encode(), tltype="list")
+                    if not isinstance(wrapped, list) or not wrapped:
+                        raise InvalidSignature("Expected binary-wrapped Content-Digest field values")
+                    values = []
+                    for item in wrapped:
+                        if not isinstance(item, tuple) or not isinstance(item[0], bytes) or item[1]:
+                            raise InvalidSignature("Expected byte sequences without parameters")
+                        values.append(item[0])
+                    cls._verify_digest(b", ".join(values), body or b"", key=node.params.get("key"))
+                else:
+                    cls._verify_digest(value, body or b"", key=node.params.get("key"))
                 verify_result = verify_result._replace(body=body or b"")
         return verify_result

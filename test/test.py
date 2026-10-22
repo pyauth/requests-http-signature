@@ -15,6 +15,7 @@ from urllib.parse import urljoin, urlsplit
 import http_sf.compat as http_sfv
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3 import HTTPHeaderDict
 from urllib3.response import HTTPResponse
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -469,6 +470,153 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         url = "http://example.com/path?query#fragment"
         auth = HTTPSignatureAuth(algorithm="rsa-sha256", key=private_key_pem, key_id="sekret", passphrase=passphrase)
         self.session.get(url, auth=auth, headers={"pubkey": base64.b64encode(public_key_pem)})
+
+
+class TestBinaryWrapping(unittest.TestCase):
+    def setUp(self):
+        self.auth = HTTPSignatureAuth(key_id=default_keyid, key=hmac_secret, signature_algorithm=algorithms.HMAC_SHA256)
+
+    def verify(self, message, components=(), **kwargs):
+        return HTTPSignatureAuth.verify(
+            message,
+            require_components=components,
+            signature_algorithm=algorithms.HMAC_SHA256,
+            key_resolver=self.auth.signer.key_resolver,
+            **kwargs,
+        )
+
+    def request(self, fields):
+        request = requests.Request("GET", "https://example.com/").prepare()
+        request.headers = HTTPHeaderDict(fields)
+        return request
+
+    def response(self, cookies):
+        response = requests.Response()
+        response.status_code = 200
+        response.request = self.request([])
+        response.headers = HTTPHeaderDict(("Set-Cookie", value) for value in cookies)
+        return response
+
+    def test_rfc_binary_wrapping_vectors_preserve_field_boundaries(self):
+        self.auth.covered_component_ids = ('"example-header";bs',)
+        request = self.request([("Example-Header", "value, with, lots"), ("Example-Header", "of, commas")])
+        self.auth(request)
+        result = self.verify(request, self.auth.covered_component_ids)
+        self.assertEqual(
+            result.covered_components['"example-header";bs'], ":dmFsdWUsIHdpdGgsIGxvdHM=:, :b2YsIGNvbW1hcw==:"
+        )
+        self.assertEqual(request.headers.getlist("Example-Header"), ["value, with, lots", "of, commas"])
+        request.headers["Example-Header"] = "value, with, lots, of, commas"
+        with self.assertRaises(InvalidSignature):
+            self.verify(request, self.auth.covered_component_ids)
+        self.auth(request)
+        result = self.verify(request, self.auth.covered_component_ids)
+        self.assertEqual(result.covered_components['"example-header";bs'], ":dmFsdWUsIHdpdGgsIGxvdHMsIG9mLCBjb21tYXM=:")
+
+    def test_binary_wrapping_normalizes_ows_folding_and_latin1_octets(self):
+        self.auth.covered_component_ids = ('"example-header";bs',)
+        request = self.request(
+            [("Example-Header", " \tfirst\t\r\n second \t"), ("Example-Header", "\xff"), ("Example-Header", "")]
+        )
+        self.auth(request)
+        result = self.verify(request, self.auth.covered_component_ids)
+        self.assertEqual(result.covered_components['"example-header";bs'], ":Zmlyc3Qgc2Vjb25k:, :/w==:, ::")
+
+    def test_incompatible_binary_wrapping_parameters_are_rejected(self):
+        for component in (
+            '"example-header";bs=?0',
+            '"example-header";bs=1',
+            '"example-header";bs;sf',
+            '"example-header";bs;key="a"',
+            '"example-header";bs;tr',
+            '"@method";bs',
+        ):
+            with self.subTest(component=component):
+                self.auth.covered_component_ids = (component,)
+                with self.assertRaises(HTTPMessageSignaturesException):
+                    self.auth(self.request([("Example-Header", "a=1")]))
+
+    def test_binary_wrapping_does_not_hide_invalid_field_values(self):
+        self.auth.covered_component_ids = ('"example-header";bs',)
+        for value in ("one\ntwo", "one\r\ntwo", "one\x00two", "\u20ac"):
+            with self.subTest(value=value), self.assertRaises(HTTPMessageSignaturesException):
+                self.auth(self.request([("Example-Header", value)]))
+
+    def test_multiple_set_cookie_is_automatically_covered_and_armored(self):
+        cookies = ["a=1; Expires=Wed, 21 Oct 2037 07:28:00 GMT", "b=2; HttpOnly"]
+        for components in ((), ("set-cookie",), ('"set-cookie";bs',)):
+            with self.subTest(components=components):
+                self.auth.covered_component_ids = components
+                request = self.request([("Set-Cookie", cookies[0]), ("set-cookie", cookies[1])])
+                self.auth(request)
+                result = self.verify(request)
+                self.assertIn('"set-cookie";bs', result.covered_components)
+                self.assertNotIn('"set-cookie"', result.covered_components)
+                self.assertEqual(request.headers.getlist("Set-Cookie"), cookies)
+                request.headers["Set-Cookie"] = ", ".join(cookies)
+                with self.assertRaises(InvalidSignature):
+                    self.verify(request)
+
+    def test_response_signer_and_requests_raw_header_recovery(self):
+        from requests_http_signature import HTTPMessageSigner as RequestsSigner
+
+        response = self.response(["a=1", "b=2"])
+        signer = RequestsSigner(signature_algorithm=algorithms.HMAC_SHA256, key_resolver=self.auth.signer.key_resolver)
+        signer.sign(response, key_id=default_keyid, covered_component_ids=("@status", "set-cookie"))
+        raw = HTTPResponse(body=io.BytesIO(b""), headers=response.headers, status=200, preload_content=False)
+        received = HTTPAdapter().build_response(response.request, raw)
+        self.assertEqual(received.headers["Set-Cookie"], "a=1, b=2")
+        result = self.verify(received, ("@status",), body=b"")
+        self.assertEqual(result.covered_components['"set-cookie";bs'], ":YT0x:, :Yj0y:")
+        received.headers["Set-Cookie"] = "a=3, b=2"
+        with self.assertRaisesRegex(InvalidSignature, "raw field lines"):
+            self.verify(received, ("@status",), body=b"")
+
+    def test_unsigned_and_unarmored_multiple_cookies_are_rejected(self):
+        legacy = HTTPMessageSigner(
+            signature_algorithm=algorithms.HMAC_SHA256, key_resolver=self.auth.signer.key_resolver
+        )
+        for components in (("@status",), ("@status", "set-cookie")):
+            with self.subTest(components=components):
+                response = self.response(["a=1", "b=2"])
+                legacy.sign(response, key_id=default_keyid, covered_component_ids=components)
+                with self.assertRaises(InvalidSignature):
+                    self.verify(response, ("@status",), body=b"")
+                raw = HTTPResponse(body=io.BytesIO(b""), headers=response.headers, status=200, preload_content=False)
+                received = HTTPAdapter().build_response(response.request, raw)
+                with self.assertRaises(InvalidSignature):
+                    self.verify(received, ("@status",), body=b"")
+
+    def test_single_cookie_can_use_plain_or_binary_coverage(self):
+        for component in ("set-cookie", '"set-cookie";bs'):
+            with self.subTest(component=component):
+                response = self.response(["a=1; Expires=Wed, 21 Oct 2037 07:28:00 GMT"])
+                self.auth.signer.sign(response, key_id=default_keyid, covered_component_ids=("@status", component))
+                self.verify(response, ("@status", component), body=b"")
+
+    def test_binary_wrapping_can_target_associated_request(self):
+        response = self.response([])
+        response.request = self.request([("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")])
+        components = ("@status", '"set-cookie";req;bs')
+        self.auth.signer.sign(response, key_id=default_keyid, covered_component_ids=components)
+        result = self.verify(response, components, body=b"")
+        self.assertEqual(result.covered_components['"set-cookie";req;bs'], ":YT0x:, :Yj0y:")
+
+    def test_binary_wrapped_content_digest_is_verified(self):
+        self.auth.covered_component_ids = ('"content-digest";bs',)
+        request = requests.Request("POST", "https://example.com/", data=b"hello", auth=self.auth).prepare()
+        self.assertEqual(self.verify(request, self.auth.covered_component_ids).body, b"hello")
+        request.body = b"wrong"
+        with self.assertRaises(InvalidSignature):
+            self.verify(request, self.auth.covered_component_ids)
+
+    def test_external_signing_rejects_cookie_boundary_changes(self):
+        request = self.request([("Set-Cookie", "a=1"), ("Set-Cookie", "b=2")])
+        prepared = self.auth.prepare(request)
+        signature = algorithms.HMAC_SHA256(private_key=hmac_secret).sign(prepared.signature_base)
+        request.headers["Set-Cookie"] = "a=1, b=2"
+        with self.assertRaises(HTTPMessageSignaturesException):
+            self.auth.apply(request, prepared, signature)
 
 
 if __name__ == "__main__":

@@ -172,13 +172,52 @@ Use lowercase component names. Individual query parameters use ``@query-param`` 
 
 The two query names above are distinct and both are signed. Component identity includes parameter values but ignores
 parameter order, as specified in RFC 9421 section 2. Duplicate identifiers, including ``date`` and ``"date"``, are errors.
-When a supplied header container exposes names more than once under case-insensitive matching, the package raises an
-error instead of choosing a value. It cannot recover field lines already discarded by a header container.
+Use a field-line-preserving container such as ``urllib3.HTTPHeaderDict`` for repeated fields. Differently cased
+duplicate keys in an ordinary dictionary remain errors, except for Set-Cookie, whose separate values are preserved.
 
 Dictionary-member coverage such as ``'"content-digest";key="sha-256";sf'`` is supported. Its parameter order may differ
 in ``require_components``; the signed wire order is preserved. A covered digest member suffices for body validation
-without requiring the whole Content-Digest field. ``@request-response`` and unsupported Structured Field flags are
-not implemented.
+without requiring the whole Content-Digest field. ``@request-response``, trailers, and whole-field ``sf`` serialization
+are not implemented.
+
+Binary-wrapped fields and Set-Cookie
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The ``bs`` parameter implements binary wrapping from
+`RFC 9421 section 2.1.3 <https://www.rfc-editor.org/rfc/rfc9421.html#section-2.1.3>`_. It preserves the boundaries of
+separate field values, preventing the ambiguity described in
+`section 7.5.6 <https://www.rfc-editor.org/rfc/rfc9421.html#section-7.5.6>`_. To request wrapping explicitly, use a
+serialized component identifier such as ``'"set-cookie";bs'`` or ``'"example-header";bs'`` in ``covered_component_ids``.
+Each value is unfolded, trimmed, and encoded separately as a Structured Field Byte Sequence before joining the list.
+Header strings use Requests' Latin-1 mapping of HTTP octets. ``bs`` must be true and cannot be combined with ``sf`` or
+``key``. It can be combined with ``req`` when signing an associated request field in a response.
+
+When multiple Set-Cookie values are present, signing automatically adds ``"set-cookie";bs`` coverage, or upgrades a
+bare ``set-cookie`` component to that form. Verification requires that the selected signature cover those values
+with ``bs``, even if Set-Cookie was not explicitly listed in ``require_components``. Explicit coverage requirements
+should use ``'"set-cookie";bs'`` as well. A single cookie can still use plain coverage.
+
+The package's ``HTTPMessageSigner`` provides the same policy for response signing. It follows the underlying
+http-message-signatures signing API; response body digests must be supplied and covered by the caller::
+
+  from urllib3 import HTTPHeaderDict
+  from requests_http_signature import HTTPMessageSigner
+
+  response = requests.Response()
+  response.status_code = 200
+  response.request = requests.Request("GET", "https://example.com/").prepare()
+  response.headers = HTTPHeaderDict()
+  response.headers.add("Set-Cookie", "session=abc; Secure; HttpOnly")
+  response.headers.add("Set-Cookie", "theme=dark; Secure")
+  response_signer = HTTPMessageSigner(signature_algorithm=algorithms.HMAC_SHA256,
+                                     key_resolver=MyKeyResolver())
+  response_signer.sign(response, key_id="squirrel",
+                       covered_component_ids=("@status", '"@method";req', '"@authority";req', '"@target-uri";req'))
+
+For received Requests responses, verification recovers separate field lines from ``response.raw.headers`` when
+available and rejects disagreement with ``response.headers``. Keep the raw response attached. A combined string alone
+cannot reveal the original boundaries; splitting Set-Cookie on commas is unsafe. The verified ``bs`` component value
+is a serialized list of byte sequences, not a combined cookie field. Applications remain responsible for cookie
+syntax and policy validation, and must not trust cookies processed by Requests before signature verification succeeds.
 
 External signing
 ~~~~~~~~~~~~~~~~
