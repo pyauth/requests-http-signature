@@ -4,12 +4,15 @@ import base64
 import datetime
 import gzip
 import hashlib
+import http.client
 import io
 import json
 import logging
 import os
 import sys
+import tempfile
 import unittest
+import zlib
 from urllib.parse import urljoin, urlsplit
 
 import http_sf.compat as http_sfv
@@ -199,12 +202,70 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             "POST", "https://example.com/", data=stream, headers={"Content-Digest": digest}, auth=self.auth
         ).prepare()
         self.assertEqual(stream.tell(), 6)
-        with self.assertRaisesRegex(InvalidSignature, "streaming request requires body="):
-            self.verify(request)
-        self.assertEqual(self.verify(request, body=b"hello").body, b"hello")
-        self.assertEqual(stream.tell(), 6)
+        for position in (6, 8, 11):
+            stream.seek(position)
+            self.assertEqual(self.verify(request).body, b"hello")
+            self.assertEqual(stream.tell(), position)
+        stream.seek(6)
+        stream.write(b"changed")
         with self.assertRaises(InvalidSignature):
-            self.verify(request, body=b"changed")
+            self.verify(request)
+
+    def test_non_seekable_request_verification_does_not_consume_body(self):
+        body = iter([b"hello"])
+        self.auth.use_existing_digest = True
+        request = requests.Request(
+            "POST",
+            "https://example.com/",
+            data=body,
+            headers={"Content-Digest": ContentDigest.create(b"hello")},
+            auth=self.auth,
+        ).prepare()
+        with self.assertRaisesRegex(InvalidSignature, "buffered or seekable binary body"):
+            self.verify(request)
+        self.assertEqual(next(body), b"hello")
+
+    def test_verification_reads_binary_files_and_restores_their_position(self):
+        self.auth.use_existing_digest = True
+        for factory in (tempfile.TemporaryFile, tempfile.SpooledTemporaryFile):
+            with self.subTest(factory=factory), factory(mode="w+b") as stream:
+                stream.write(b"prefixhello")
+                stream.seek(6)
+                request = requests.Request(
+                    "POST",
+                    "https://example.com/",
+                    data=stream,
+                    headers={"Content-Digest": ContentDigest.create(b"hello")},
+                    auth=self.auth,
+                ).prepare()
+                stream.seek(0, io.SEEK_END)
+                self.assertEqual(self.verify(request).body, b"hello")
+                self.assertEqual(stream.tell(), 11)
+
+    def test_verification_restores_request_position_after_read_failure(self):
+        class UnreadableBody(io.BytesIO):
+            def read(self, *args):
+                raise OSError("Read failed")
+
+        stream = UnreadableBody(b"prefixhello")
+        stream.seek(6)
+        self.auth.use_existing_digest = True
+        request = requests.Request(
+            "POST",
+            "https://example.com/",
+            data=stream,
+            headers={"Content-Digest": ContentDigest.create(b"hello")},
+            auth=self.auth,
+        ).prepare()
+        stream.seek(8)
+        with self.assertRaisesRegex(OSError, "Read failed"):
+            self.verify(request)
+        self.assertEqual(stream.tell(), 8)
+
+    def test_verification_does_not_accept_a_separate_body(self):
+        request = requests.Request("POST", "https://example.com/", data=b"hello", auth=self.auth).prepare()
+        with self.assertRaisesRegex(TypeError, "unexpected keyword argument 'body'"):
+            self.verify(request, body=b"hello")
 
     def test_empty_response_and_explicit_empty_digest(self):
         response = requests.Response()
@@ -258,34 +319,154 @@ class TestRequestsHTTPSignature(unittest.TestCase):
                         key_resolver=self.auth.signer.key_resolver,
                     )
 
-    def test_compressed_response_uses_encoded_bytes(self):
-        encoded = gzip.compress(b"hello")
+    def make_encoded_response(self, encoded, encoding="gzip", signed_body=None, chunked=False):
         response = requests.Response()
         response.request = requests.Request("GET", "https://example.com/").prepare()
         response.url = response.request.url
         response.status_code = 200
         response.headers.update(
             {
-                "Content-Encoding": "gzip",
-                "Content-Digest": str(http_sfv.Dictionary({"sha-256": hashlib.sha256(encoded).digest()})),
+                "Content-Encoding": encoding,
+                "Content-Digest": ContentDigest.create(encoded if signed_body is None else signed_body),
             }
         )
         response.raw = HTTPResponse(
             body=io.BytesIO(encoded), headers=response.headers, preload_content=False, decode_content=False
         )
+        if chunked:
+            response.headers["Transfer-Encoding"] = "chunked"
+            chunks = [encoded[:3], encoded[3:]]
+            wire_body = b"".join(f"{len(chunk):x}\r\n".encode() + chunk + b"\r\n" for chunk in chunks if chunk)
+
+            class MemorySocket:
+                def makefile(self, mode):
+                    return io.BytesIO(
+                        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + wire_body + b"0\r\n\r\n"
+                    )
+
+            original = http.client.HTTPResponse(MemorySocket(), method="GET")
+            original.begin()
+            response.raw = HTTPResponse(
+                body=original,
+                headers=response.headers,
+                original_response=original,
+                preload_content=False,
+                decode_content=False,
+            )
         self.auth.signer.sign(
             response,
             key_id=default_keyid,
-            covered_component_ids=("@status", "content-digest"),
+            covered_component_ids=(
+                "@status",
+                '"@method";req',
+                '"@authority";req',
+                '"@target-uri";req',
+                "content-encoding",
+                "content-digest",
+            ),
             use_existing_digest=True,
         )
-        with self.assertRaisesRegex(InvalidSignature, "Encoded responses require body="):
-            self.verify(response, require_components=("@status",))
-        raw_body = response.raw.read(decode_content=False)
-        result = self.verify(response, require_components=("@status",), body=raw_body)
-        self.assertEqual(gzip.decompress(result.body), b"hello")
+        return response
+
+    def test_compressed_response_uses_encoded_bytes_and_preserves_content_access(self):
+        payload = b'{"hello": "world"}'
+        for encoding, encoded in (("gzip", gzip.compress(payload)), ("deflate", zlib.compress(payload))):
+            for chunked in (False, True):
+                with self.subTest(encoding=encoding, chunked=chunked):
+                    response = self.make_encoded_response(encoded, encoding, chunked=chunked)
+                    self.assertEqual(self.verify(response).body, encoded)
+                    self.assertEqual(b"".join(response.iter_content(3)), payload)
+                    self.assertEqual(self.verify(response).body, encoded)
+                    response = self.make_encoded_response(encoded, encoding, chunked=chunked)
+                    self.verify(response)
+                    self.assertEqual(response.content, payload)
+                    self.assertEqual(response.text, payload.decode())
+                    self.assertEqual(response.json(), {"hello": "world"})
+                    self.assertEqual(self.verify(response).body, encoded)
+
+    def test_compressed_response_rejects_digest_of_decoded_or_different_content(self):
+        payload = b"hello"
+        encoded = gzip.compress(payload)
+        for signed_body in (payload, gzip.compress(b"different"), b""):
+            with self.subTest(signed_body=signed_body):
+                response = self.make_encoded_response(encoded, signed_body=signed_body)
+                with self.assertRaisesRegex(InvalidSignature, "Content-Digest does not match"):
+                    self.verify(response)
+
+    def test_response_verification_rejects_partially_consumed_streams(self):
+        for encoding, encoded in (("identity", b"badhello"), ("gzip", gzip.compress(b"badhello"))):
+            for chunked in (False, True):
+                with self.subTest(encoding=encoding, chunked=chunked):
+                    response = self.make_encoded_response(encoded, encoding, signed_body=b"hello", chunked=chunked)
+                    chunks = response.iter_content(3)
+                    first = next(chunks)
+                    self.assertTrue(first)
+                    self.assertTrue(b"bad".startswith(first))
+                    with self.assertRaisesRegex(InvalidSignature, "partially consumed"):
+                        self.verify(response)
+                    chunks.close()
+                    response.close()
+
+    def test_response_verification_rejects_consumed_compressed_content(self):
+        for access in ("content", "iter_content", "raw"):
+            with self.subTest(access=access):
+                response = self.make_encoded_response(gzip.compress(b"hello"))
+                if access == "content":
+                    self.assertEqual(response.content, b"hello")
+                elif access == "iter_content":
+                    self.assertEqual(b"".join(response.iter_content()), b"hello")
+                else:
+                    response.raw.read(decode_content=False)
+                with self.assertRaises(InvalidSignature):
+                    self.verify(response)
+
+    def test_response_headers_are_verified_before_reading_body(self):
+        response = self.make_encoded_response(gzip.compress(b"hello"))
+        response.status_code = 403
         with self.assertRaises(InvalidSignature):
-            self.verify(response, require_components=("@status",), body=b"hello")
+            self.verify(response)
+        self.assertEqual(response.raw.tell(), 0)
+
+    def test_compressed_empty_response_and_bodyless_statuses(self):
+        encoded = gzip.compress(b"")
+        response = self.make_encoded_response(encoded)
+        self.assertEqual(self.verify(response).body, encoded)
+        self.assertEqual(response.content, b"")
+        for method, status in (("HEAD", 200), ("GET", 204), ("GET", 304)):
+            with self.subTest(method=method, status=status):
+                response = requests.Response()
+                response.request = requests.Request(method, "https://example.com/").prepare()
+                response.status_code = status
+                response.headers["Content-Encoding"] = "gzip"
+                self.auth.signer.sign(
+                    response,
+                    key_id=default_keyid,
+                    covered_component_ids=("@status",),
+                    body=b"",
+                )
+                self.assertEqual(self.verify(response, require_components=("@status",)).body, b"")
+
+    def test_complete_unencoded_content_remains_verifiable(self):
+        for chunked in (False, True):
+            with self.subTest(chunked=chunked):
+                response = self.make_encoded_response(b"hello", "identity", chunked=chunked)
+                self.assertEqual(response.content, b"hello")
+                self.assertEqual(self.verify(response).body, b"hello")
+
+    def test_response_verification_rejects_consumed_unbuffered_content(self):
+        for chunked in (False, True):
+            with self.subTest(chunked=chunked):
+                response = self.make_encoded_response(b"hello", "identity", signed_body=b"", chunked=chunked)
+                self.assertEqual(b"".join(response.iter_content()), b"hello")
+                with self.assertRaisesRegex(InvalidSignature, "consumed before verification"):
+                    self.verify(response)
+
+    def test_repeated_response_verification_rechecks_headers(self):
+        response = self.make_encoded_response(gzip.compress(b"hello"))
+        self.verify(response)
+        response.status_code = 403
+        with self.assertRaises(InvalidSignature):
+            self.verify(response)
 
     def test_invalid_digest_fields_raise_invalid_signature(self):
         class UncheckedDigest(ContentDigest):

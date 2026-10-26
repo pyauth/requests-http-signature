@@ -1,8 +1,9 @@
 import datetime
 import email.utils
+import io
 import secrets
 from collections.abc import Sequence
-from typing import Any, ClassVar
+from typing import Any, BinaryIO, ClassVar, cast
 
 import requests
 from http_message_signatures import (
@@ -19,6 +20,25 @@ from http_message_signatures import VerifyResult as VerifyResult
 from http_message_signatures import algorithms as algorithms
 from http_message_signatures.structures import get_header_fields
 from requests.exceptions import RequestException
+from urllib3.response import HTTPResponse
+
+
+class _BufferedHTTPResponse(HTTPResponse):
+    """Replay captured content through urllib3's normal content decoders."""
+
+    def __init__(self, original: HTTPResponse, body: bytes):
+        super().__init__(
+            body=io.BytesIO(body),
+            headers=original.headers,
+            status=original.status,
+            version=original.version,
+            reason=original.reason,
+            retries=original.retries,
+            request_url=original.geturl(),
+            preload_content=False,
+            decode_content=False,
+        )
+        self._signature_body = body
 
 
 class RequestsHttpSignatureException(RequestException):
@@ -53,7 +73,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         ``@method``, ``@target-uri``, ``@authority``, ``@scheme``, ``@request-target``, ``@path``, ``@query``, and
         ``'"@query-param";name="Pet"'``. Parameter values are case-sensitive; their order does not affect identity.
         Duplicate component identifiers are rejected. Defaults to ``@method``, ``@authority``, and ``@target-uri``.
-        ``Authorization`` and ``Date`` are also covered when present. The upstream signer adds digest coverage for
+        ``Authorization`` and ``Date`` are also covered when present. The signer adds digest coverage for
         buffered content, including empty requests. Explicit digest-member coverage, such as
         ``'"content-digest";key="sha-256"'``, replaces automatic whole-field coverage for buffered content.
         Streams always cover the whole supplied Content-Digest field.
@@ -245,6 +265,12 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
 
     @classmethod
     def get_body(cls, message: requests.PreparedRequest | requests.Response) -> bytes:
+        """Read content for digest verification, preserving buffered responses and seekable request bodies.
+
+        Compressed responses must be requested with ``stream=True``. Their encoded content is buffered internally
+        and remains available to Requests for normal decoding. Seekable binary request bodies are read from the
+        starting position recorded by Requests, then restored to their current position.
+        """
         if isinstance(message, requests.Response):
             if (
                 message.status_code in (204, 304)
@@ -252,21 +278,50 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                 or (message.request is not None and message.request.method == "HEAD")
             ):
                 return b""
+            if isinstance(message.raw, _BufferedHTTPResponse):
+                return message.raw._signature_body
             headers = requests.structures.CaseInsensitiveDict(message.headers)
             if headers.get("Content-Encoding", "identity").lower() != "identity":
-                raise InvalidSignature(
-                    "Encoded responses require body= with encoded bytes: request stream=True, "
-                    "then read response.raw.read(decode_content=False) before accessing response.content"
-                )
+                if message._content is not False or message._content_consumed:
+                    raise InvalidSignature("Encoded response content is no longer available; request stream=True")
+                if not isinstance(message.raw, HTTPResponse):
+                    raise InvalidSignature("Encoded response verification requires an unread urllib3 response")
+                # tell() alone does not account for urllib3's chunked reads.
+                if message.raw.tell() != 0 or message.raw._uncached_read_occurred:
+                    raise InvalidSignature("Response body was partially consumed before verification")
+                body = message.raw.read(decode_content=False)
+                message.raw = _BufferedHTTPResponse(message.raw, body)
+                return body
+            if message._content is False:
+                if message._content_consumed:
+                    raise InvalidSignature("Response body was consumed before verification")
+                if isinstance(message.raw, HTTPResponse) and message.raw._uncached_read_occurred:
+                    raise InvalidSignature("Response body was partially consumed before verification")
+                if isinstance(message.raw, (HTTPResponse, io.IOBase)) and message.raw.tell() != 0:
+                    raise InvalidSignature("Response body was partially consumed before verification")
             content = message.content
             return b"" if content is None else content
         if isinstance(message.body, str):
             return message.body.encode("utf-8")
         if isinstance(message.body, (bytes, bytearray, memoryview)):
             return bytes(message.body)
-        if message.body is not None:
-            raise InvalidSignature("Verifying a streaming request requires body= with the transmitted bytes")
-        return b""
+        if message.body is None:
+            return b""
+        if not isinstance(message._body_position, int):
+            raise InvalidSignature("Request verification requires a buffered or seekable binary body")
+        stream = cast(BinaryIO, message.body)
+        try:
+            position = stream.tell()
+            stream.seek(message._body_position)
+        except (AttributeError, OSError, ValueError) as exc:
+            raise InvalidSignature("Request verification requires a buffered or seekable binary body") from exc
+        try:
+            body = stream.read()
+        finally:
+            stream.seek(position)
+        if not isinstance(body, bytes):
+            raise InvalidSignature("Verification requires body bytes")
+        return body
 
     @classmethod
     def verify(
@@ -279,10 +334,15 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         max_age: datetime.timedelta | None = datetime.timedelta(days=1),
         expect_tag: str | None = None,
         expect_label: str | None = None,
-        body: bytes | None = None,
     ) -> VerifyResult:
         """
-        Verify an HTTP message signature.
+        Verify an HTTP message signature and its body digest using content read from the message.
+
+        Request compressed responses with ``stream=True`` so this method can read their encoded content.
+        It buffers that content internally and preserves Requests' normal ``content``, ``text``, and ``json()``
+        access after verification. Already decoded or partially consumed response streams cannot be verified.
+        Buffered requests and seekable binary request bodies are read automatically; seekable bodies retain
+        their current position. Missing unencoded response content is treated as empty bytes.
 
         .. admonition:: See what is signed
 
@@ -332,13 +392,6 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             Customize ``verifier_class`` to change its ``require_created`` and ``max_clock_skew`` policies.
         :param expect_tag: Select a signed application tag. Selection must leave one verified signature.
         :param expect_label: Further select the dictionary label; requires ``expect_tag`` under the default policy.
-        :param body:
-            Transmitted content bytes before content decoding. Required for compressed responses and streaming
-            request bodies. For a compressed response, send with ``stream=True`` and capture
-            ``response.raw.read(decode_content=False)`` before accessing ``response.content`` or ``iter_content()``.
-            This method does not check that caller-supplied bytes came from the message; keep that association intact.
-            Without this argument, unencoded response content is read into memory and buffered request bodies are used.
-            Missing unencoded response content is treated as empty bytes.
 
         :returns: *VerifyResult*, a namedtuple with the following attributes:
 
@@ -352,7 +405,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             * ``body``: Content bytes before decoding, after validating their covered digest; ``None`` otherwise.
 
         :raises InvalidSignature: Signature, required coverage, or body-digest validation fails.
-        :raises HTTPMessageSignaturesException: The algorithm, required components, body type, or selection policy is invalid.
+        :raises HTTPMessageSignaturesException: The algorithm, required components, or selection policy is invalid.
         """
         if require_components is None:
             require_components = (
@@ -364,11 +417,6 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             cls._validate_header_names(message)
         except RequestsHttpSignatureException as e:
             raise InvalidSignature(str(e)) from e
-        if body is None:
-            body = cls.get_body(message)
-            if not isinstance(body, bytes):
-                raise InvalidSignature("Verification requires body bytes")
-
         verifier = cls.verifier_class(
             signature_algorithm=signature_algorithm,
             key_resolver=key_resolver,
@@ -380,8 +428,10 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             expect_tag=expect_tag,
             expect_label=expect_label,
             require_components=require_components,
-            body=body,
         )
         if len(verify_results) != 1:
             raise InvalidSignature("Select a single signature using expect_tag and expect_label")
-        return verify_results[0]
+        body = cls.get_body(message)
+        if not isinstance(body, bytes):
+            raise InvalidSignature("Verification requires body bytes")
+        return verifier.verify_body(message, verify_results, body)[0]
