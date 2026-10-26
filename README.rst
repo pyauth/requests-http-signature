@@ -11,8 +11,10 @@ Installation
 
     $ pip install requests-http-signature
 
-Requires Requests 2.34.2 or later and http-message-signatures 2.1.0 or later. The signing, verification, and
-external-signing examples below use the APIs published in http-message-signatures 2.1.0.
+Requires Requests 2.34.2 or later and the shared signing and digest APIs from http-message-signatures main.
+This development branch pins upstream commit ``d8aaca2c97b719892973701a7a2f1af27b3e0414`` in its dependencies.
+The pin will be replaced with a minimum version requirement after the upstream release. To install this development
+version from a checkout, run ``pip install .``. Older http-message-signatures versions are not supported.
 
 Usage
 -----
@@ -32,11 +34,10 @@ Usage
                            signature_algorithm=algorithms.HMAC_SHA256)
   requests.get(url, auth=auth, allow_redirects=False)
 
-By default, only the ``Date`` header and the ``@method``, ``@authority``, and ``@target-uri`` derived component
-identifiers are signed for body-less requests such as GET. The ``Date`` header is set if it is absent. In addition,
-the ``Authorization`` header is signed if it is present, and for requests with bodies (such as POST), the
-``Content-Digest`` header is set to the SHA256 of the request body using the format described in the
-`RFC 9530, Digest Fields <https://www.rfc-editor.org/rfc/rfc9530.html>`_ and signed.
+By default, the ``Date`` header and the ``@method``, ``@authority``, and ``@target-uri`` derived components are signed.
+The ``Date`` header is set if it is absent, and ``Authorization`` is signed if present. The upstream signer generates
+and signs a SHA-256 ``Content-Digest`` for buffered request content, including empty content on GET requests, using
+the format described in `RFC 9530, Digest Fields <https://www.rfc-editor.org/rfc/rfc9530.html>`_.
 To add other headers to the signature, pass an array of header names in the ``covered_component_ids`` keyword argument.
 See the `API documentation <https://pyauth.github.io/requests-http-signature/#id3>`_ for the full list of options and
 details.
@@ -133,28 +134,45 @@ constructor as bytes in the PEM format, or configure the key resolver as follows
 
 Digest algorithms
 ~~~~~~~~~~~~~~~~~
-To generate a Content-Digest header using SHA-512 instead of the default SHA-256, subclass ``HTTPSignatureAuth`` as
-follows::
+Digest generation and validation use the shared ``http_message_signatures.ContentDigest`` implementation.
+To generate SHA-512 instead of the default SHA-256, configure a signer subclass::
 
-  class MySigner(HTTPSignatureAuth):
-      signing_content_digest_algorithm = "sha-512"
+  from http_message_signatures import ContentDigest, HTTPMessageSigner
+
+  class SHA512Digest(ContentDigest):
+      algorithm = "sha-512"
+
+  class SHA512Signer(HTTPMessageSigner):
+      content_digest_class = SHA512Digest
+
+  class MyAuth(HTTPSignatureAuth):
+      signer_class = SHA512Signer
+
+``signer_class`` replaces the former ``signing_content_digest_algorithm`` and ``add_digest()`` customization points.
+Fixed keys use the upstream ``MappingKeyResolver``; the package no longer provides ``SingleKeyResolver``.
+Signing and verification errors from the shared APIs propagate as ``HTTPMessageSignaturesException`` or its
+``InvalidSignature`` subclass. Requests-specific preparation errors raise ``RequestsHttpSignatureException``.
 
 Request bodies and streams
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 Bytes, text, form dictionaries, JSON, and Requests' buffered multipart uploads are supported. Text is encoded as
-UTF-8 before hashing and sending. A supplied Content-Digest is checked against buffered content before signing.
+UTF-8 before hashing and sending. A supplied Content-Digest requires ``use_existing_digest=True`` on the auth object
+and is checked against buffered content before signing. This option is also required when signing a request again
+or appending another signature. A stale digest is rejected; remove or replace it after changing the content.
 
 File objects and iterators require a caller-supplied Content-Digest for the bytes that will be sent from their current
-position. The auth handler does not read, consume, buffer, or rewind these streams. For example::
+position and ``use_existing_digest=True``. The auth handler validates the supplied digest's format and algorithms
+and signs the whole field without reading or rewinding the stream. For example::
 
-  import hashlib
   import io
-  from http_sf.compat import Dictionary
+  from http_message_signatures import ContentDigest
 
   payload = b"upload content"
-  digest = str(Dictionary({"sha-256": hashlib.sha256(payload).digest()}))
+  digest = ContentDigest.create(payload)
+  stream_auth = HTTPSignatureAuth(key=preshared_secret, key_id=preshared_key_id,
+                                  signature_algorithm=algorithms.HMAC_SHA256, use_existing_digest=True)
   response = requests.post(url, data=io.BytesIO(payload), headers={"Content-Digest": digest},
-                           auth=auth, allow_redirects=False)
+                           auth=stream_auth, allow_redirects=False)
 
 Keep a streaming body unchanged after computing its digest. To verify a streaming request, pass its transmitted bytes
 as ``body=``; verification does not consume the stream. Unsupported streams without a supplied digest raise
@@ -203,7 +221,7 @@ request. It does not authenticate the external service, verify its signature, re
 against a supplied digest. Keep the prepared object associated with the right request and keep that request stable
 until sending. For DER-encoded ECDSA output, use ``algorithms.ECDSA_P256_SHA256.signature_from_der()`` before applying it.
 See the `http-message-signatures external-signing documentation
-<https://github.com/pyauth/http-message-signatures/tree/v2.1.0#remote-and-asynchronous-signing>`_ for algorithm input requirements.
+<https://github.com/pyauth/http-message-signatures#remote-and-asynchronous-signing>`_ for algorithm input requirements.
 
 Signature selection and verification policies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -1,12 +1,9 @@
 import datetime
 import email.utils
-import hashlib
-import hmac
 import secrets
 from collections.abc import Sequence
-from typing import ClassVar, cast
+from typing import Any, ClassVar
 
-import http_sf
 import requests
 from http_message_signatures import (
     HTTPMessageSigner,
@@ -14,31 +11,18 @@ from http_message_signatures import (
     HTTPSignatureAlgorithm,
     HTTPSignatureComponentResolver,
     HTTPSignatureKeyResolver,
+    MappingKeyResolver,
 )
 from http_message_signatures import InvalidSignature as InvalidSignature
 from http_message_signatures import PreparedSignature as PreparedSignature
 from http_message_signatures import VerifyResult as VerifyResult
 from http_message_signatures import algorithms as algorithms
-from http_sf.compat import Dictionary, Item
+from http_message_signatures.structures import get_header_fields
 from requests.exceptions import RequestException
 
 
 class RequestsHttpSignatureException(RequestException):
     """An error occurred while constructing the HTTP Signature for your request."""
-
-
-class SingleKeyResolver(HTTPSignatureKeyResolver):
-    def __init__(self, key_id: str, key: bytes) -> None:
-        self.key_id = key_id
-        self.key = key
-
-    def resolve_public_key(self, key_id: str) -> bytes:
-        assert key_id == self.key_id
-        return self.key
-
-    def resolve_private_key(self, key_id: str) -> bytes:
-        assert key_id == self.key_id
-        return self.key
 
 
 class HTTPSignatureAuth(requests.auth.AuthBase):
@@ -69,8 +53,10 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         ``@method``, ``@target-uri``, ``@authority``, ``@scheme``, ``@request-target``, ``@path``, ``@query``, and
         ``'"@query-param";name="Pet"'``. Parameter values are case-sensitive; their order does not affect identity.
         Duplicate component identifiers are rejected. Defaults to ``@method``, ``@authority``, and ``@target-uri``.
-        ``Authorization``, ``Content-Digest``, and ``Date`` are also covered when present. Explicit digest-member
-        coverage, such as ``'"content-digest";key="sha-256"'``, replaces automatic whole-field digest coverage.
+        ``Authorization`` and ``Date`` are also covered when present. The upstream signer adds digest coverage for
+        buffered content, including empty requests. Explicit digest-member coverage, such as
+        ``'"content-digest";key="sha-256"'``, replaces automatic whole-field coverage for buffered content.
+        Streams always cover the whole supplied Content-Digest field.
     :param label: The signature dictionary label, which is not signed.
     :param tag: A signed application tag, usable with ``verify(expect_tag=...)``.
     :param append_if_signature_exists: Append a distinct signature label instead of replacing existing signatures.
@@ -82,6 +68,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         the nonce can be controlled by subclassing this class and overloading the ``get_nonce()`` method.
     :param expires_in:
         Use this to set the ``expires`` signature parameter to the time of signing plus the given timedelta.
+    :param use_existing_digest:
+        Allow a supplied Content-Digest, validating it against buffered bytes before signing.
+        Required for streams with precomputed digests and when signing a request again.
     """
 
     component_resolver_class: type[HTTPSignatureComponentResolver] = HTTPSignatureComponentResolver
@@ -93,39 +82,10 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
     verifier_class: type[HTTPMessageVerifier] = HTTPMessageVerifier
     "A verifier subclass can configure creation-time requirements and clock-skew tolerance."
 
-    _content_digest_hashers: ClassVar = {"sha-256": hashlib.sha256, "sha-512": hashlib.sha512}
-    signing_content_digest_algorithm = "sha-256"
-    "The hash algorithm to use to generate the Content-Digest header field (either ``sha-256`` or ``sha-512``)."
+    signer_class: type[HTTPMessageSigner] = HTTPMessageSigner
+    "A signer subclass can select a ContentDigest subclass through its content_digest_class attribute."
 
-    _auto_cover_header_fields: ClassVar = {"authorization", "content-digest", "date"}
-
-    @staticmethod
-    def _component_node(component_id: str) -> Item:
-        if not isinstance(component_id, str):
-            raise RequestsHttpSignatureException("Component identifiers must be strings")
-        node = Item()
-        node.parse((component_id if component_id.startswith('"') else http_sf.ser(component_id)).encode())
-        if not isinstance(node.value, str) or node.value != node.value.lower():
-            raise RequestsHttpSignatureException("Component names must be lowercase Structured Field strings")
-        return node
-
-    @classmethod
-    def _component_key(cls, component_id: str) -> str:
-        node = cls._component_node(component_id)
-        # RFC 9421 section 2: compare parameters without changing their wire order.
-        return http_sf.ser((cast(str, node.value), dict(sorted(node.params.items()))))
-
-    @classmethod
-    def _component_map(cls, component_ids: Sequence[str]) -> dict[str, str]:
-        if isinstance(component_ids, (str, bytes, bytearray)):
-            raise RequestsHttpSignatureException("Components must be a sequence of strings, not a single string")
-        components = {}
-        for component_id in component_ids:
-            key = cls._component_key(component_id)
-            if key in components:
-                raise RequestsHttpSignatureException(f"Duplicate component identifier: {component_id}")
-            components[key] = component_id
-        return components
+    _auto_cover_header_fields: ClassVar[tuple[str, ...]] = ("authorization", "date")
 
     @staticmethod
     def _validate_header_names(message: requests.PreparedRequest | requests.Response) -> None:
@@ -149,11 +109,12 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         include_alg: bool = True,
         use_nonce: bool = False,
         expires_in: datetime.timedelta | None = None,
+        use_existing_digest: bool = False,
     ) -> None:
         if key_resolver is not None and key is not None:
             raise RequestsHttpSignatureException("Either key_resolver or key must be specified, not both.")
         if key is not None:
-            key_resolver = SingleKeyResolver(key_id=key_id, key=key)
+            key_resolver = MappingKeyResolver(private_keys={key_id: key}, public_keys={key_id: key})
 
         self.key_id = key_id
         self.label = label
@@ -163,7 +124,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         self.use_nonce = use_nonce
         self.covered_component_ids = covered_component_ids
         self.expires_in = expires_in
-        self.signer = HTTPMessageSigner(
+        self.use_existing_digest = use_existing_digest
+        self.signer = self.signer_class(
             signature_algorithm=signature_algorithm,
             key_resolver=key_resolver,
             component_resolver_class=self.component_resolver_class,
@@ -173,7 +135,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         if "Date" not in request.headers:
             request.headers["Date"] = email.utils.formatdate(timestamp, usegmt=True)
 
-    def add_digest(self, request: requests.PreparedRequest) -> None:
+    def _signing_body(self, request: requests.PreparedRequest) -> bytes | None:
+        self._validate_header_names(request)
+        request.headers = requests.structures.CaseInsensitiveDict(request.headers)
         if isinstance(request.body, str):
             request.body = request.body.encode("utf-8")
         elif isinstance(request.body, (bytearray, memoryview)):
@@ -183,49 +147,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                 raise RequestsHttpSignatureException(
                     "Streaming bodies require a precomputed Content-Digest header; the stream is not read or rewound"
                 )
-            return
-        body = request.body or b""
-        if "Content-Digest" in request.headers:
-            try:
-                self._verify_digest(request.headers["Content-Digest"], body)
-            except InvalidSignature as e:
-                raise RequestsHttpSignatureException(str(e)) from e
-        elif request.body is not None or any(self._is_body_digest(c) for c in self.covered_component_ids):
-            hasher = self._content_digest_hashers[self.signing_content_digest_algorithm]
-            request.headers["Content-Digest"] = str(
-                Dictionary({self.signing_content_digest_algorithm: hasher(body).digest()})
-            )
-
-    @classmethod
-    def _is_body_digest(cls, component_id: str) -> bool:
-        node = cls._component_node(component_id)
-        return node.value == "content-digest" and "req" not in node.params
-
-    @classmethod
-    def _verify_digest(cls, value: str | bytes, body: bytes, *, key: str | None = None) -> None:
-        def reject_duplicate(name: str, context: str) -> None:
-            if context == "dictionary":
-                raise InvalidSignature(f"Duplicate content digest algorithm {name!r}")
-
-        try:
-            parsed = http_sf.parse(
-                value.encode() if isinstance(value, str) else value,
-                tltype="dictionary" if key is None else "item",
-                on_duplicate_key=reject_duplicate,
-            )
-        except (ValueError, TypeError) as e:
-            raise InvalidSignature("Malformed Content-Digest field") from e
-        digests = parsed if key is None else {key: parsed}
-        if not isinstance(digests, dict) or not digests:
-            raise InvalidSignature("Found a content-digest header with no digests")
-        for algorithm, member in digests.items():
-            if not isinstance(member, tuple) or not isinstance(member[0], bytes):
-                raise InvalidSignature("Content digest values must be Structured Field byte sequences")
-            if algorithm not in cls._content_digest_hashers:
-                raise InvalidSignature(f'Unsupported content digest algorithm "{algorithm}"')
-            expected = cls._content_digest_hashers[algorithm](body).digest()
-            if not hmac.compare_digest(member[0], expected):
-                raise InvalidSignature("The content-digest header does not match the message body")
+            return None
+        return request.body or b""
 
     def get_nonce(self, request: requests.PreparedRequest) -> str | None:
         if self.use_nonce:
@@ -242,16 +165,33 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             return created + self.expires_in
         return None
 
-    def get_covered_component_ids(self, request: requests.PreparedRequest) -> list[str]:
-        covered_component_ids = self._component_map(self.covered_component_ids)
-        self._validate_header_names(request)
-        headers = {name.lower() for name in request.headers}
-        for header in self._auto_cover_header_fields:
-            if header in headers:
-                if header == "content-digest" and any(self._is_body_digest(c) for c in covered_component_ids.values()):
-                    continue
-                covered_component_ids.setdefault(self._component_key(header), header)
-        return list(covered_component_ids.values())
+    def get_covered_component_ids(self, request: requests.PreparedRequest) -> Sequence[str]:
+        if isinstance(self.covered_component_ids, (str, bytes, bytearray)):
+            return self.covered_component_ids
+        components = list(self.covered_component_ids)
+        auto_cover = self._auto_cover_header_fields
+        if request.body is not None and not isinstance(request.body, bytes):
+            auto_cover += ("content-digest",)
+        for header in auto_cover:
+            if header in request.headers and header not in components and f'"{header}"' not in components:
+                components.append(header)
+        return components
+
+    def _signing_options(self, request: requests.PreparedRequest) -> dict[str, Any]:
+        body = self._signing_body(request)
+        created = self.get_created(request)
+        return {
+            "key_id": self.key_id,
+            "created": created,
+            "expires": self.get_expires(request, created=created),
+            "nonce": self.get_nonce(request),
+            "label": self.label,
+            "tag": self.tag,
+            "include_alg": self.include_alg,
+            "covered_component_ids": self.get_covered_component_ids(request),
+            "body": body,
+            "use_existing_digest": self.use_existing_digest,
+        }
 
     def prepare(self, request: requests.PreparedRequest) -> PreparedSignature:
         """Set digest/date headers and return signing input without resolving a key.
@@ -259,24 +199,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         Use a fully prepared Requests request. Keep the returned object with this
         request while an external signer signs its ``signature_base`` bytes.
         """
-        self._component_map(self.covered_component_ids)
-        self._validate_header_names(request)
-        request.headers = requests.structures.CaseInsensitiveDict(request.headers)
-        self.add_digest(request)
-        created = self.get_created(request)
-        expires = self.get_expires(request, created=created)
-        covered_component_ids = self.get_covered_component_ids(request)
-        return self.signer.prepare(
-            request,
-            key_id=self.key_id,
-            created=created,
-            expires=expires,
-            nonce=self.get_nonce(request),
-            label=self.label,
-            tag=self.tag,
-            include_alg=self.include_alg,
-            covered_component_ids=covered_component_ids,
-        )
+        return self.signer.prepare(request, **self._signing_options(request))
 
     def apply(
         self,
@@ -293,14 +216,11 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         unchanged. This does not verify the external signature or refresh its age.
         """
         self._validate_header_names(request)
-        headers = requests.structures.CaseInsensitiveDict(request.headers)
+        headers = get_header_fields(request.headers)
         if "Content-Digest" in headers and (
             request.body is None or isinstance(request.body, (str, bytes, bytearray, memoryview))
         ):
-            try:
-                self._verify_digest(headers["Content-Digest"], self.get_body(request) or b"")
-            except InvalidSignature as e:
-                raise RequestsHttpSignatureException(str(e)) from e
+            self.signer.content_digest_class.verify(headers["Content-Digest"], self.get_body(request))
         self.signer.apply(
             request,
             prepared,
@@ -316,13 +236,15 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             raise RequestsHttpSignatureException(
                 "Local signing requires a key or key_resolver; use prepare()/apply() otherwise"
             )
-        prepared = self.prepare(request)
-        key = self.signer.key_resolver.resolve_private_key(self.key_id)
-        signer = self.signer.signature_algorithm(private_key=key)
-        return self.apply(request, prepared, signer.sign(prepared.signature_base))
+        self.signer.sign(
+            request,
+            append_if_signature_exists=self.append_if_signature_exists,
+            **self._signing_options(request),
+        )
+        return request
 
     @classmethod
-    def get_body(cls, message: requests.PreparedRequest | requests.Response) -> bytes | None:
+    def get_body(cls, message: requests.PreparedRequest | requests.Response) -> bytes:
         if isinstance(message, requests.Response):
             if (
                 message.status_code in (204, 304)
@@ -343,7 +265,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             return bytes(message.body)
         if message.body is not None:
             raise InvalidSignature("Verifying a streaming request requires body= with the transmitted bytes")
-        return None
+        return b""
 
     @classmethod
     def verify(
@@ -428,7 +350,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             * ``body``: Content bytes before decoding, after validating their covered digest; ``None`` otherwise.
 
         :raises InvalidSignature: Signature, required coverage, or body-digest validation fails.
-        :raises HTTPMessageSignaturesException: The algorithm or signature-selection policy is invalid.
+        :raises HTTPMessageSignaturesException: The algorithm, required components, body type, or selection policy is invalid.
         """
         if require_components is None:
             require_components = (
@@ -438,35 +360,24 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             )
         try:
             cls._validate_header_names(message)
-            required = cls._component_map(require_components)
-        except (ValueError, TypeError, RequestsHttpSignatureException) as e:
+        except RequestsHttpSignatureException as e:
             raise InvalidSignature(str(e)) from e
-        if body is not None and not isinstance(body, bytes):
-            raise InvalidSignature("body must contain bytes before content decoding")
         if body is None:
             body = cls.get_body(message)
-        headers = requests.structures.CaseInsensitiveDict(message.headers)
-        if (body or "Content-Digest" in headers) and not any(cls._is_body_digest(c) for c in required):
-            required.setdefault('"content-digest"', "content-digest")
 
         verifier = cls.verifier_class(
             signature_algorithm=signature_algorithm,
             key_resolver=key_resolver,
             component_resolver_class=cls.component_resolver_class,
         )
-        verify_results = verifier.verify(message, max_age=max_age, expect_tag=expect_tag, expect_label=expect_label)
+        verify_results = verifier.verify(
+            message,
+            max_age=max_age,
+            expect_tag=expect_tag,
+            expect_label=expect_label,
+            require_components=require_components,
+            body=body,
+        )
         if len(verify_results) != 1:
             raise InvalidSignature("Select a single signature using expect_tag and expect_label")
-        verify_result = verify_results[0]
-        covered = cls._component_map(tuple(verify_result.covered_components))
-        for component_key in required:
-            if component_key not in covered:
-                raise InvalidSignature(f"A required component, {component_key}, was not covered by the signature.")
-            if cls._is_body_digest(component_key):
-                node = Item()
-                node.parse(component_key.encode())
-                cls._verify_digest(
-                    verify_result.covered_components[covered[component_key]], body or b"", key=node.params.get("key")
-                )
-                verify_result = verify_result._replace(body=body or b"")
-        return verify_result
+        return verify_results[0]

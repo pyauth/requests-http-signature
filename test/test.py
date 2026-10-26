@@ -19,7 +19,13 @@ from urllib3.response import HTTPResponse
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from http_message_signatures import HTTPMessageSigner, HTTPMessageVerifier, InvalidSignature
+from http_message_signatures import (
+    ContentDigest,
+    HTTPMessageSigner,
+    HTTPMessageVerifier,
+    InvalidSignature,
+    MappingKeyResolver,
+)
 from http_message_signatures.exceptions import HTTPMessageSignaturesException
 
 from requests_http_signature import HTTPSignatureAuth, RequestsHttpSignatureException, algorithms
@@ -60,12 +66,10 @@ class TestAdapter(HTTPAdapter):
             signature_algorithm=self.client_auth.signer.signature_algorithm,
             key_resolver=self.client_auth.signer.key_resolver,
         )
-        hasher = HTTPSignatureAuth._content_digest_hashers["sha-256"]
-        digest = hasher(response.raw.getvalue()).digest()
-        response.headers["Content-Digest"] = str(http_sfv.Dictionary({"sha-256": digest}))
         signer.sign(
             response,
             key_id=default_keyid,
+            body=response.raw.getvalue(),
             covered_component_ids=(
                 "@status",
                 '"@method";req',
@@ -75,11 +79,6 @@ class TestAdapter(HTTPAdapter):
             ),
         )
         return response
-
-
-class DigestlessSignatureAuth(HTTPSignatureAuth):
-    def add_digest(self, request):
-        pass
 
 
 class TestRequestsHTTPSignature(unittest.TestCase):
@@ -151,9 +150,10 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             "GET", "https://example.com/", headers={"Example-Dict": "a=1"}, auth=self.auth
         ).prepare()
         self.assertIn(first, self.verify(request, require_components=(second,)).covered_components)
+        self.auth.use_existing_digest = True
         for components in ((first, second), ("date", '"date"'), "@method"):
             self.auth.covered_component_ids = components
-            with self.assertRaises(RequestsHttpSignatureException):
+            with self.assertRaises(HTTPMessageSignaturesException):
                 self.auth(request)
 
     def test_case_insensitive_header_collisions_are_rejected(self):
@@ -169,6 +169,7 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         request = requests.Request("POST", "https://example.com/", data=b"hello", auth=self.auth).prepare()
         request.headers = {name.lower(): value for name, value in request.headers.items()}
         self.assertEqual(self.verify(request).body, b"hello")
+        self.auth.use_existing_digest = True
         self.auth(request)
         self.assertEqual(self.verify(request).body, b"hello")
 
@@ -192,6 +193,7 @@ class TestRequestsHTTPSignature(unittest.TestCase):
                 requests.Request("POST", "https://example.com/", data=body, auth=self.auth).prepare()
         stream = io.BytesIO(b"prefixhello")
         stream.seek(6)
+        self.auth.use_existing_digest = True
         digest = str(http_sfv.Dictionary({"sha-256": hashlib.sha256(b"hello").digest()}))
         request = requests.Request(
             "POST", "https://example.com/", data=stream, headers={"Content-Digest": digest}, auth=self.auth
@@ -231,7 +233,12 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         response.raw = HTTPResponse(
             body=io.BytesIO(encoded), headers=response.headers, preload_content=False, decode_content=False
         )
-        self.auth.signer.sign(response, key_id=default_keyid, covered_component_ids=("@status", "content-digest"))
+        self.auth.signer.sign(
+            response,
+            key_id=default_keyid,
+            covered_component_ids=("@status", "content-digest"),
+            use_existing_digest=True,
+        )
         with self.assertRaisesRegex(InvalidSignature, "Encoded responses require body="):
             self.verify(response, require_components=("@status",))
         raw_body = response.raw.read(decode_content=False)
@@ -241,6 +248,13 @@ class TestRequestsHTTPSignature(unittest.TestCase):
             self.verify(response, require_components=("@status",), body=b"hello")
 
     def test_invalid_digest_fields_raise_invalid_signature(self):
+        class UncheckedDigest(ContentDigest):
+            @classmethod
+            def prepare(cls, headers, body, *, use_existing_digest):
+                # Construct signed invalid fields to exercise verification independently of signing checks.
+                pass
+
+        self.auth.signer.content_digest_class = UncheckedDigest
         digest = str(http_sfv.Dictionary({"sha-256": hashlib.sha256(b"hello").digest()}))
         for value in ("bad : syntax", "sha-256=(1 2)", "sha-256=1", "", digest + ", " + digest, "unknown=:aGVsbG8=:"):
             with self.subTest(value=value):
@@ -259,8 +273,129 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         self.assertNotIn('"content-digest"', result.covered_components)
         self.assertEqual(result.body, b"hello")
 
+    def test_selected_digest_member_satisfies_default_body_policy(self):
+        component = '"content-digest";key="sha-256"'
+        self.auth.covered_component_ids = (*self.auth.covered_component_ids, component)
+        request = requests.Request("POST", "https://example.com/", data=b"hello", auth=self.auth).prepare()
+        result = self.verify(request)
+        self.assertNotIn('"content-digest"', result.covered_components)
+        self.assertEqual(result.body, b"hello")
+        request.body = b"changed"
+        with self.assertRaises(InvalidSignature):
+            self.verify(request)
+
+    def test_empty_request_has_a_verified_digest(self):
+        for method in ("GET", "POST"):
+            with self.subTest(method=method):
+                request = requests.Request(method, "https://example.com/", auth=self.auth).prepare()
+                self.assertEqual(request.headers["Content-Digest"], ContentDigest.create(b""))
+                self.assertEqual(self.verify(request).body, b"")
+
+    def test_existing_digest_requires_opt_in(self):
+        digest = ContentDigest.create(b"hello")
+        for sign in (self.auth, self.auth.prepare):
+            for body in (b"hello", io.BytesIO(b"hello")):
+                with self.subTest(sign=sign, body=body):
+                    request = requests.Request(
+                        "POST", "https://example.com/", data=body, headers={"Content-Digest": digest}
+                    ).prepare()
+                    with self.assertRaisesRegex(HTTPMessageSignaturesException, "use_existing_digest=True"):
+                        sign(request)
+                    self.assertNotIn("Signature", request.headers)
+                    self.assertEqual(request.headers["Content-Digest"], digest)
+                    if isinstance(body, io.BytesIO):
+                        self.assertEqual(body.tell(), 0)
+
+    def test_reused_digest_is_preserved_and_revalidated(self):
+        self.auth.use_existing_digest = True
+        digest = ContentDigest.create(b"hello")
+        request = requests.Request(
+            "POST", "https://example.com/", data=b"hello", headers={"Content-Digest": digest}, auth=self.auth
+        ).prepare()
+        self.auth(request)
+        self.assertEqual(request.headers["Content-Digest"], digest)
+        self.assertEqual(self.verify(request).body, b"hello")
+        original_signature = request.headers["Signature"]
+        request.body = b"changed"
+        with self.assertRaises(InvalidSignature):
+            self.auth(request)
+        self.assertEqual(request.headers["Signature"], original_signature)
+
+    def test_shared_digest_class_selects_sha512(self):
+        class SHA512Digest(ContentDigest):
+            algorithm = "sha-512"
+
+        class SHA512Signer(HTTPMessageSigner):
+            content_digest_class = SHA512Digest
+
+        class SHA512Auth(HTTPSignatureAuth):
+            signer_class = SHA512Signer
+
+        auth = SHA512Auth(key_id=default_keyid, key=hmac_secret, signature_algorithm=algorithms.HMAC_SHA256)
+        for external in (False, True):
+            with self.subTest(external=external):
+                request = requests.Request("POST", "https://example.com/", data=b"hello").prepare()
+                if external:
+                    prepared = auth.prepare(request)
+                    signature = algorithms.HMAC_SHA256(shared_secret=hmac_secret).sign(prepared.signature_base)
+                    auth.apply(request, prepared, signature)
+                else:
+                    auth(request)
+                self.assertEqual(request.headers["Content-Digest"], SHA512Digest.create(b"hello"))
+                self.assertEqual(self.verify(request).body, b"hello")
+
+    def test_stream_digest_is_validated_without_consuming_the_stream(self):
+        self.auth.use_existing_digest = True
+        digest = ContentDigest.create(b"hello")
+        for value in ("", "sha-256=1", "sha-256=:AA==:", digest + ", " + digest, "unknown=:aGVsbG8=:"):
+            with self.subTest(value=value):
+                stream = io.BytesIO(b"prefixhello")
+                stream.seek(6)
+                request = requests.Request(
+                    "POST", "https://example.com/", data=stream, headers={"Content-Digest": value}
+                ).prepare()
+                with self.assertRaises(InvalidSignature):
+                    self.auth(request)
+                self.assertEqual(stream.tell(), 6)
+                self.assertNotIn("Signature", request.headers)
+
+    def test_response_body_requires_its_own_signed_digest(self):
+        response = requests.Response()
+        response.request = requests.Request("POST", "https://example.com/", data=b"hello", auth=self.auth).prepare()
+        response.status_code = 200
+        response._content = b"hello"
+        self.auth.signer.sign(response, key_id=default_keyid, covered_component_ids=("@status", '"content-digest";req'))
+        with self.assertRaisesRegex(InvalidSignature, "requires a signed Content-Digest"):
+            self.verify(response, require_components=("@status",))
+        response.headers["Content-Digest"] = ContentDigest.create(b"hello")
+        with self.assertRaises(InvalidSignature):
+            self.verify(response, require_components=("@status",))
+        self.auth.signer.sign(
+            response,
+            key_id=default_keyid,
+            covered_component_ids=("@status",),
+            body=b"hello",
+            use_existing_digest=True,
+        )
+        self.assertEqual(self.verify(response, require_components=("@status",)).body, b"hello")
+
+    def test_shared_mapping_resolver_rejects_unknown_key_ids(self):
+        self.assertIsInstance(self.auth.signer.key_resolver, MappingKeyResolver)
+        auth = HTTPSignatureAuth(key_id="untrusted", key=hmac_secret, signature_algorithm=algorithms.HMAC_SHA256)
+        request = requests.Request("GET", "https://example.com/", auth=auth).prepare()
+        with self.assertRaises(InvalidSignature):
+            self.verify(request)
+
+    def test_required_components_use_upstream_validation(self):
+        request = requests.Request("GET", "https://example.com/", auth=self.auth).prepare()
+        with self.assertRaises(HTTPMessageSignaturesException):
+            self.verify(request, require_components=("@method", '"@method"'))
+        with self.assertRaises(InvalidSignature):
+            self.verify(request, require_components=("@path",))
+
     def test_stale_supplied_digest_is_rejected_before_signing(self):
-        with self.assertRaisesRegex(RequestsHttpSignatureException, "does not match"):
+        self.auth.use_existing_digest = True
+        with self.assertRaisesRegex(InvalidSignature, "does not match"):
             requests.Request(
                 "POST",
                 "https://example.com/",
@@ -326,6 +461,7 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         self.assertEqual(self.verify(first).body, b"first")
         self.assertEqual(self.verify(second).body, b"second")
         self.auth.label, self.auth.tag = "second", "app"
+        self.auth.use_existing_digest = True
         prepared = self.auth.prepare(first)
         self.auth.apply(first, prepared, algorithm.sign(prepared.signature_base), append_if_signature_exists=True)
         self.assertEqual(self.verify(first, expect_tag="app").label, "second")
@@ -336,6 +472,7 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         self.auth(request)
         self.auth.label, self.auth.tag = "second", "other"
         self.auth.append_if_signature_exists = True
+        self.auth.use_existing_digest = True
         self.auth(request)
         with self.assertRaises(InvalidSignature):
             self.verify(request)
@@ -439,6 +576,7 @@ class TestRequestsHTTPSignature(unittest.TestCase):
 
     def test_b21(self):
         url = "https://example.com/foo?param=Value&Pet=dog"
+        self.auth.use_existing_digest = True
         self.session.post(
             url,
             json={"hello": "world"},
