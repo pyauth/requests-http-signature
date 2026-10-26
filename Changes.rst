@@ -1,3 +1,9 @@
+Changes for v2.0.0 (2026-10-25)
+===============================
+
+Use shared HTTP message signature infrastructure from
+http-message-signatures 3.0.0
+
 Changes for v1.0.0 (2026-10-18)
 ===============================
 
