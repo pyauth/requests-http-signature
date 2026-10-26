@@ -30,7 +30,7 @@ Usage
   requests.get(url, auth=auth, allow_redirects=False)
 
 By default, the ``Date`` header and the ``@method``, ``@authority``, and ``@target-uri`` derived components are signed.
-The ``Date`` header is set if it is absent, and ``Authorization`` is signed if present. The upstream signer generates
+The ``Date`` header is set if it is absent, and ``Authorization`` is signed if present. The signer generates
 and signs a SHA-256 ``Content-Digest`` for buffered request content, including empty content on GET requests, using
 the format described in `RFC 9530, Digest Fields <https://www.rfc-editor.org/rfc/rfc9530.html>`_.
 To add other headers to the signature, pass an array of header names in the ``covered_component_ids`` keyword argument.
@@ -49,23 +49,19 @@ The class method ``HTTPSignatureAuth.verify()`` can be used to verify responses 
           return b'monorail_cat'
 
   with requests.get(url, auth=auth, stream=True, allow_redirects=False) as response:
-      encoded_body = response.raw.read(decode_content=False)
       verify_result = HTTPSignatureAuth.verify(response,
                                               signature_algorithm=algorithms.HMAC_SHA256,
-                                              key_resolver=MyKeyResolver(),
-                                              body=encoded_body)
+                                              key_resolver=MyKeyResolver())
 
 Response verification requires ``@status`` plus ``"@method";req``, ``"@authority";req``, and
 ``"@target-uri";req`` by default. The ``req`` flag binds the response to its associated request.
 The server must sign these components; bare request-derived components are invalid in response signatures.
 If your protocol uses a different coverage profile, pass it explicitly as ``require_components``.
 
-``Content-Digest`` covers bytes before content decoding. Requests normally decompresses ``response.content``;
-the ``stream=True`` workflow above preserves the bytes needed for verification, including gzip or Brotli content.
-Do not access ``response.content`` or ``iter_content()`` before capturing them. Decode ``verify_result.body`` only
-after verification. ``body=`` must refer to content captured from this response, not another response or a decoded copy.
-For unencoded responses, ``body`` may be omitted and ``verify()`` reads ``response.content`` into memory.
-These APIs buffer content; they do not provide incremental verification for arbitrarily large downloads.
+``verify()`` reads and verifies the response body automatically. Use ``stream=True`` as shown above so it can
+verify compressed content before Requests decodes it. After verification, use ``response.content``, ``response.text``,
+or ``response.json()`` normally. ``verify_result.body`` contains the authenticated bytes before content decoding.
+Verification buffers content in memory; it does not provide incremental verification for arbitrarily large downloads.
 
 Nonempty content requires a covered digest. Empty responses, including HEAD, 204, and 304, do not require a digest
 unless it is explicitly required or present. When present, a covered digest of empty content is verified as well.
@@ -169,8 +165,9 @@ and signs the whole field without reading or rewinding the stream. For example::
   response = requests.post(url, data=io.BytesIO(payload), headers={"Content-Digest": digest},
                            auth=stream_auth, allow_redirects=False)
 
-Keep a streaming body unchanged after computing its digest. To verify a streaming request, pass its transmitted bytes
-as ``body=``; verification does not consume the stream. Unsupported streams without a supplied digest raise
+Keep a streaming body unchanged after computing its digest. Verification reads seekable binary request bodies from
+the starting position recorded by Requests and restores their current position afterward. Non-seekable request bodies
+cannot be verified. Unsupported streams without a supplied digest raise
 ``RequestsHttpSignatureException``. Malformed, duplicate, wrongly typed, unsupported, or mismatched digests during
 verification raise ``InvalidSignature``.
 

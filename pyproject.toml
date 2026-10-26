@@ -24,6 +24,7 @@ classifiers = [
 dependencies = [
     "http-message-signatures >= 3.0.0",
     "requests >= 2.34.2",
+    "urllib3 >= 2.8.0",
 ]
 
 [project.urls]
