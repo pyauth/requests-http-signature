@@ -22,8 +22,8 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "http-message-signatures >= 2.1.0",
-    "http-sf >= 1.4.0",
+    # Replace with a minimum release version when the shared APIs are published.
+    "http-message-signatures @ git+https://github.com/pyauth/http-message-signatures@d8aaca2c97b719892973701a7a2f1af27b3e0414",
     "requests >= 2.34.2",
 ]
 
@@ -46,6 +46,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.isort]
 profile = "black"
