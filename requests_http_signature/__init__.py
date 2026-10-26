@@ -258,7 +258,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
                     "Encoded responses require body= with encoded bytes: request stream=True, "
                     "then read response.raw.read(decode_content=False) before accessing response.content"
                 )
-            return message.content
+            content = message.content
+            return b"" if content is None else content
         if isinstance(message.body, str):
             return message.body.encode("utf-8")
         if isinstance(message.body, (bytes, bytearray, memoryview)):
@@ -337,6 +338,7 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             ``response.raw.read(decode_content=False)`` before accessing ``response.content`` or ``iter_content()``.
             This method does not check that caller-supplied bytes came from the message; keep that association intact.
             Without this argument, unencoded response content is read into memory and buffered request bodies are used.
+            Missing unencoded response content is treated as empty bytes.
 
         :returns: *VerifyResult*, a namedtuple with the following attributes:
 
@@ -364,6 +366,8 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
             raise InvalidSignature(str(e)) from e
         if body is None:
             body = cls.get_body(message)
+            if not isinstance(body, bytes):
+                raise InvalidSignature("Verification requires body bytes")
 
         verifier = cls.verifier_class(
             signature_algorithm=signature_algorithm,
