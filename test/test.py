@@ -218,6 +218,46 @@ class TestRequestsHTTPSignature(unittest.TestCase):
         request = requests.Request("GET", "https://example.com/", auth=self.auth).prepare()
         self.assertEqual(self.verify(request, require_components=("content-digest",)).body, b"")
 
+    def test_absent_response_content_is_verified_as_empty(self):
+        for signed_body in (None, b"", b"missing body"):
+            with self.subTest(signed_body=signed_body):
+                response = requests.Response()
+                response.request = requests.Request("GET", "https://example.com/").prepare()
+                response.url = response.request.url
+                response.status_code = 200
+                self.auth.signer.sign(
+                    response,
+                    key_id=default_keyid,
+                    body=signed_body,
+                    covered_component_ids=("@status", '"@method";req', '"@authority";req', '"@target-uri";req'),
+                )
+                self.assertIsNone(response.raw)
+                self.assertIsNone(response.content)
+                if signed_body:
+                    with self.assertRaisesRegex(InvalidSignature, "Content-Digest does not match"):
+                        self.verify(response)
+                else:
+                    self.assertEqual(self.verify(response).body, signed_body)
+
+    def test_verification_rejects_non_bytes_from_get_body(self):
+        request = requests.Request("POST", "https://example.com/", data=b"hello", auth=self.auth).prepare()
+        for body in (None, "hello", bytearray(b"hello"), memoryview(b"hello")):
+            with self.subTest(body=body):
+
+                class InvalidBodyAuth(HTTPSignatureAuth):
+                    body_value = body
+
+                    @classmethod
+                    def get_body(cls, message):
+                        return cls.body_value
+
+                with self.assertRaisesRegex(InvalidSignature, "Verification requires body bytes"):
+                    InvalidBodyAuth.verify(
+                        request,
+                        signature_algorithm=algorithms.HMAC_SHA256,
+                        key_resolver=self.auth.signer.key_resolver,
+                    )
+
     def test_compressed_response_uses_encoded_bytes(self):
         encoded = gzip.compress(b"hello")
         response = requests.Response()
