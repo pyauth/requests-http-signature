@@ -11,8 +11,6 @@ Installation
 
     $ pip install requests-http-signature
 
-Requires Requests 2.34.2 or later and http-message-signatures 3.0.0 or later.
-
 Usage
 -----
 
