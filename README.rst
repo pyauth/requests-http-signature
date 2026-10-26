@@ -11,10 +11,7 @@ Installation
 
     $ pip install requests-http-signature
 
-Requires Requests 2.34.2 or later and the shared signing and digest APIs from http-message-signatures main.
-This development branch pins upstream commit ``d8aaca2c97b719892973701a7a2f1af27b3e0414`` in its dependencies.
-The pin will be replaced with a minimum version requirement after the upstream release. To install this development
-version from a checkout, run ``pip install .``. Older http-message-signatures versions are not supported.
+Requires Requests 2.34.2 or later and http-message-signatures 3.0.0 or later.
 
 Usage
 -----
