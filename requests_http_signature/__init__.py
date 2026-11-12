@@ -237,10 +237,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         """
         self._validate_header_names(request)
         headers = get_header_fields(request.headers)
-        if "Content-Digest" in headers and (
-            request.body is None or isinstance(request.body, (str, bytes, bytearray, memoryview))
-        ):
-            self.signer.content_digest_class.verify(headers["Content-Digest"], self.get_body(request))
+        if "Content-Digest" in headers:
+            if request.body is None or isinstance(request.body, (str, bytes, bytearray, memoryview)):
+                self.signer.content_digest_class.verify(headers["Content-Digest"], self.get_body(request))
         self.signer.apply(
             request,
             prepared,
@@ -272,11 +271,9 @@ class HTTPSignatureAuth(requests.auth.AuthBase):
         starting position recorded by Requests, then restored to their current position.
         """
         if isinstance(message, requests.Response):
-            if (
-                message.status_code in (204, 304)
-                or 100 <= message.status_code < 200
-                or (message.request is not None and message.request.method == "HEAD")
-            ):
+            if message.status_code in (204, 304) or 100 <= message.status_code < 200:
+                return b""
+            if message.request is not None and message.request.method == "HEAD":
                 return b""
             if isinstance(message.raw, _BufferedHTTPResponse):
                 return message.raw._signature_body
