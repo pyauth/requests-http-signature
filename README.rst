@@ -215,6 +215,37 @@ until sending. For DER-encoded ECDSA output, use ``algorithms.ECDSA_P256_SHA256.
 See the `http-message-signatures external-signing documentation
 <https://github.com/pyauth/http-message-signatures#remote-and-asynchronous-signing>`_ for algorithm input requirements.
 
+For example, an application with an authenticated Boto3 AWS KMS client and an RSA key with ``SIGN_VERIFY`` usage
+and permission to call ``kms:Sign`` can use the
+`KMS Sign API <https://docs.aws.amazon.com/kms/latest/APIReference/API_Sign.html>`_ in digest mode:
+
+.. code-block:: python
+
+  import hashlib
+
+  import requests
+  from requests_http_signature import HTTPSignatureAuth, algorithms
+
+  # kms_client and key_id are supplied by the application.
+  external_auth = HTTPSignatureAuth(key_id=key_id, signature_algorithm=algorithms.RSA_V1_5_SHA256)
+  with requests.Session() as session:
+      request = session.prepare_request(requests.Request("POST", "https://example.com/", json={"hello": "world"}))
+      prepared = external_auth.prepare(request)
+      kms_response = kms_client.sign(
+          KeyId=key_id,
+          Message=hashlib.sha256(prepared.signature_base).digest(),
+          MessageType="DIGEST",
+          SigningAlgorithm="RSASSA_PKCS1_V1_5_SHA_256",
+      )
+      external_auth.apply(request, prepared, kms_response["Signature"])
+      response = session.send(request, allow_redirects=False)
+
+Hash ``prepared.signature_base``, which includes the covered components and signature parameters, rather than the
+request body or its Content-Digest. ``MessageType="DIGEST"`` prevents KMS from hashing this SHA-256 digest again.
+The KMS algorithm must match ``algorithms.RSA_V1_5_SHA256``. Boto3 returns raw signature bytes; pass them directly to
+``apply()`` without base64 encoding or decoding. The receiving application must associate ``key_id`` with the
+corresponding public key to verify the HTTP message signature.
+
 Signature selection and verification policies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Set a signed application ``tag`` when signing. To preserve another signature, also choose a distinct ``label`` and set
