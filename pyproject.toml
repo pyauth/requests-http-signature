@@ -57,5 +57,5 @@ profile = "black"
 line-length = 120
 
 [tool.ruff.lint]
-ignore = ["SIM102", "SIM114", "SIM117"]
+ignore = ["SIM102", "SIM117"]
 unfixable = ["F401"]
